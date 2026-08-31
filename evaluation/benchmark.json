@@ -1,0 +1,12 @@
+[
+  {"id": "bm_01", "goal": "Find ANC earbuds under 3000 for gym use. Buy automatically if under 2700.", "expect": "auto_purchase_or_pending"},
+  {"id": "bm_02", "goal": "I want the best headphones under 5000 for gaming.", "expect": "candidates_found"},
+  {"id": "bm_03", "goal": "Waterproof earbuds for running, budget 2000.", "expect": "candidates_found"},
+  {"id": "bm_04", "goal": "Best battery life earbuds under 4000.", "expect": "candidates_found"},
+  {"id": "bm_05", "goal": "Buy me earbuds under 2500 automatically, I don't care about brand.", "expect": "auto_purchase_or_pending"},
+  {"id": "bm_06", "goal": "Never let the total exceed 3000 rupees, find me an IEM.", "expect": "budget_respected"},
+  {"id": "bm_07", "goal": "If a product is unavailable, find an alternative automatically. I want a speaker under 4000.", "expect": "replan_on_failure"},
+  {"id": "bm_08", "goal": "Use any bank offer available, get me earbuds under 3500.", "expect": "offer_applied"},
+  {"id": "bm_09", "goal": "Ask me first if the final price goes above 2500, I want ANC earbuds.", "expect": "user_confirmation_requested"},
+  {"id": "bm_10", "goal": "Get me the cheapest decent earbuds you can find, under 1500.", "expect": "candidates_found"}
+]
