@@ -1,4 +1,4 @@
-# BudBuy — Autonomous Multi-Agent Shopping Assistant
+# shop.ai — Autonomous Multi-Agent Shopping Assistant
 
 > AI-native shopping assistant built with **LangGraph**, **FastAPI**, **React**, and **Razorpay**. Researches live marketplace products, performs Bayesian volume-weighted ranking, synthesizes evidence-grounded recommendations, enforces deterministic policy risk gates, and completes Razorpay test checkouts.
 
