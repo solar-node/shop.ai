@@ -82,27 +82,28 @@ class EvaluationBenchmark:
 
     def eval_budget_targeting(self):
         cat = "2. Deterministic Price & Budget Targeting"
-        budget = 5000.0
+        budget = 10000.0
 
         # Test 1: Hard ceiling enforcement
-        over_budget = _price_value_score(5200.0, budget)
-        self.assert_test(cat, "Over-budget product (₹5,200 on ₹5,000) receives 0.0 price score", over_budget == 0.0,
+        over_budget = _price_value_score(10500.0, budget)
+        self.assert_test(cat, "Over-budget product (₹10,500 on ₹10,000) receives 0.0 price score", over_budget == 0.0,
                          f"Score: {over_budget}")
 
-        # Test 2: Ideal 85%-100% budget zone gives top price value score (>= 0.95)
-        top_zone = _price_value_score(4500.0, budget)
-        self.assert_test(cat, "85%–100% budget sweet-spot (₹4,500 on ₹5,000) achieves top score (>= 0.95)", top_zone >= 0.95,
+        # Test 2: Ideal >=90% budget zone gives top price value score (>= 0.95)
+        top_zone = _price_value_score(9500.0, budget)
+        self.assert_test(cat, ">=90% budget sweet-spot (₹9,500 on ₹10,000) achieves top score (>= 0.95)", top_zone >= 0.95,
                          f"Score: {top_zone}")
 
-        # Test 3: Moderate zone (60%-84%)
-        mid_zone = _price_value_score(3600.0, budget)
-        self.assert_test(cat, "Moderate zone (₹3,600 on ₹5,000) scores in 0.65–0.95 range", 0.65 <= mid_zone < 0.95,
+        # Test 3: High tier zone (80%-89%)
+        mid_zone = _price_value_score(8500.0, budget)
+        self.assert_test(cat, "High tier zone (₹8,500 on ₹10,000) scores in 0.70–0.95 range", 0.70 <= mid_zone < 0.95,
                          f"Score: {mid_zone}")
 
-        # Test 4: Low-price item (<60%) still eligible but lower priority
-        low_zone = _price_value_score(1500.0, budget)
-        self.assert_test(cat, "Low-price item (₹1,500 on ₹5,000) scores lower than sweet-spot item", low_zone < top_zone,
+        # Test 4: Low-end underspending item (<60%, e.g. ₹5,000) receives low score (< 0.30)
+        low_zone = _price_value_score(5000.0, budget)
+        self.assert_test(cat, "Low-end item (₹5,000 on ₹10,000) strongly de-prioritized (< 0.30)", low_zone < 0.30 and low_zone < top_zone,
                          f"Low: {low_zone} vs Top: {top_zone}")
+
 
     def eval_feature_matching(self):
         cat = "3. Evidence-Grounded Feature Matching"

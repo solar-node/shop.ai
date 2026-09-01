@@ -78,15 +78,16 @@ export default function CandidateProducts({
           const budgetNum = Number(budgetMax) || 0;
           let budgetFitTag = null;
           if (budgetNum > 0 && rawPrice > 0) {
-            if (rawPrice >= 0.85 * budgetNum && rawPrice <= budgetNum) {
-              budgetFitTag = { text: "Optimal budget fit (85–100% target)", type: "optimal" };
-            } else if (rawPrice < 0.85 * budgetNum) {
-              const target85 = Math.round(0.85 * budgetNum).toLocaleString("en-IN");
-              budgetFitTag = { text: `Below 85% target budget (< ₹${target85})`, type: "low" };
+            if (rawPrice >= 0.90 * budgetNum && rawPrice <= budgetNum) {
+              budgetFitTag = { text: "Optimal budget fit (90–100% target)", type: "optimal" };
+            } else if (rawPrice < 0.90 * budgetNum) {
+              const target90 = Math.round(0.90 * budgetNum).toLocaleString("en-IN");
+              budgetFitTag = { text: `Below 90% target budget (< ₹${target90})`, type: "low" };
             } else {
               budgetFitTag = { text: `Exceeds ₹${budgetNum.toLocaleString("en-IN")} ceiling`, type: "high" };
             }
           }
+
 
 
           const matchedReqs = Array.isArray(c.matched_requirements) ? c.matched_requirements.slice(0, 4) : [];

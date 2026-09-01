@@ -109,17 +109,21 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
 
                     final_list = list(deduped.values())
 
-                    # Prioritize items in the target budget zone (>= 70% and >= 85% of budget)
+                    # Prioritize items in the target budget zone (>= 90% primary, >= 80% secondary)
                     if effective_max_price > 0:
                         def _budget_priority_key(x):
                             p = float(x.get("price") or 0)
                             ratio = p / effective_max_price
-                            # Score higher if in the 70%-100% or 85%-100% zone
-                            zone_score = 3 if ratio >= 0.85 else (2 if ratio >= 0.70 else (1 if ratio >= 0.40 else 0))
+                            # Zone 4: >= 90% (e.g. > ₹9,000 for ₹10,000 budget)
+                            # Zone 3: 80% - 90% (e.g. ₹8,000 - ₹9,000)
+                            # Zone 2: 60% - 80%
+                            # Zone 1: < 60% (e.g. ₹5,000 or cheap accessories)
+                            zone_score = 4 if ratio >= 0.90 else (3 if ratio >= 0.80 else (2 if ratio >= 0.60 else 1))
                             return (zone_score, p, int(x.get("review_count") or 0))
                         final_list.sort(key=_budget_priority_key, reverse=True)
 
                     return final_list[:max_results]
+
         except Exception as e:
             print(f"[Scraper] SerpAPI error: {e}")
 

@@ -57,15 +57,16 @@ BudBuyState = ShopAIState
 
 
 def log_agent_activity(state: ShopAIState, agent: str, action: str, detail: Any = None, success: bool = True):
-
     db = _Session()
     try:
         sid = state.get("session_id", "default")
         log_event(db, sid, agent, action, detail or {}, success=success)
         record = db.query(AgentSession).filter_by(id=sid).first()
-        if record:
-            record.status = state.get("status", "PROCESSING")
-            record.state = dict(state)
+        if not record:
+            record = AgentSession(id=sid, user_goal=state.get("user_goal", ""))
+            db.add(record)
+        record.status = state.get("status", "PROCESSING")
+        record.state = dict(state)
         db.commit()
     except Exception:
         pass
@@ -84,28 +85,37 @@ def intent_node(state: BudBuyState) -> dict:
     reqs = research_agent.extract_intent(goal)
     query = research_agent.build_search_query(reqs, goal)
     stages = _set_stage(state, "intent", "completed")
+    stages["research"] = "running"
+    updates = {"requirements": reqs, "search_query": query, "stage_status": stages, "current_stage": "RESEARCH", "status": "DISCOVERING"}
+    state.update(updates)
     log_agent_activity(state, "INTENT", "intent_extracted", reqs)
-    return {"requirements": reqs, "search_query": query, "stage_status": stages, "current_stage": "INTENT", "status": "DISCOVERING"}
+    return updates
 
 
 def marketplace_research_node(state: BudBuyState) -> dict:
     reqs = state.get("requirements", {})
     stages = _set_stage(state, "research", "running")
     products = research_agent.find_candidates(reqs, state.get("user_goal", ""))
+    updates = {"marketplace_data": products, "stage_status": stages, "current_stage": "RESEARCH"}
+    state.update(updates)
     log_agent_activity(state, "MARKETPLACE_RESEARCH", "products_retrieved", {"count": len(products)})
-    return {"marketplace_data": products, "stage_status": stages, "current_stage": "RESEARCH"}
+    return updates
 
 
 def product_info_research_node(state: BudBuyState) -> dict:
     result = product_info_agent.research_product_attributes(state.get("requirements", {}), state.get("user_goal", ""))
+    updates = {"product_info_data": result}
+    state.update(updates)
     log_agent_activity(state, "PRODUCT_INFO_RESEARCH", "attribute_plan_created", result)
-    return {"product_info_data": result}
+    return updates
 
 
 def review_trust_research_node(state: BudBuyState) -> dict:
     result = review_trust_agent.research_review_trust(state.get("requirements", {}))
+    updates = {"review_trust_data": result}
+    state.update(updates)
     log_agent_activity(state, "REVIEW_TRUST_RESEARCH", "review_model_prepared", result)
-    return {"review_trust_data": result}
+    return updates
 
 
 def evidence_synthesis_node(state: BudBuyState) -> dict:
@@ -118,8 +128,11 @@ def evidence_synthesis_node(state: BudBuyState) -> dict:
         state.get("user_goal", ""),
     )
     stages = _set_stage(state, "research", "completed")
+    stages["analyst"] = "running"
+    updates = {"normalized_evidence": normalized, "stage_status": stages, "current_stage": "ANALYST", "status": "RESEARCHING"}
+    state.update(updates)
     log_agent_activity(state, "EVIDENCE_SYNTHESIS", "evidence_fused", {"count": len(normalized)})
-    return {"normalized_evidence": normalized, "stage_status": stages, "current_stage": "RESEARCH", "status": "RESEARCHING"}
+    return updates
 
 
 def analyst_node(state: BudBuyState) -> dict:
@@ -132,15 +145,17 @@ def analyst_node(state: BudBuyState) -> dict:
         weights=weights_from_priority(reqs.get("priority_order")),
         user_goal=state.get("user_goal", ""),
     )
-
     lookup = {str(x.get("product_id")): x for x in evidence}
     candidates = []
     for i, item in enumerate(ranked, 1):
         raw = lookup.get(str(item.product_id), {})
         candidates.append({**raw, "utility_score": item.utility_score, "rank": i, "components": item.components})
     stages = _set_stage(state, "analyst", "completed")
+    stages["evaluation"] = "running"
+    updates = {"candidates": candidates, "stage_status": stages, "current_stage": "EVALUATION", "status": "ANALYZING"}
+    state.update(updates)
     log_agent_activity(state, "ANALYST", "products_ranked", {"count": len(candidates), "top": candidates[0].get("name") if candidates else None})
-    return {"candidates": candidates, "stage_status": stages, "current_stage": "ANALYST", "status": "ANALYZING"}
+    return updates
 
 
 def recommendation_node(state: BudBuyState) -> dict:
@@ -168,24 +183,30 @@ def recommendation_node(state: BudBuyState) -> dict:
         })
     selected = enriched[0]
     stages = _set_stage(state, "evaluation", "completed")
-    log_agent_activity(state, "RECOMMENDATION", "recommendation_completed", {"product": selected.get("name")})
-    return {
+    stages["risk"] = "running"
+    updates = {
         "candidates": enriched, "selected_product": selected,
         "recommendation_reasons": selected.get("recommendation_reasons", []),
         "why_this_product": selected.get("why_this_product", []),
         "recommendation": overall_rec,
         "recommendation_summary": overall_rec,
-        "stage_status": stages, "current_stage": "EVALUATION", "status": "RECOMMENDING"
+        "stage_status": stages, "current_stage": "RISK", "status": "RECOMMENDING"
     }
-
+    state.update(updates)
+    log_agent_activity(state, "RECOMMENDATION", "recommendation_completed", {"product": selected.get("name")})
+    return updates
 
 
 def risk_node(state: BudBuyState) -> dict:
     selected = state.get("selected_product") or {}
     result = risk_agent.check_purchase(selected, state.get("requirements", {}), user_goal=state.get("user_goal", ""))
     stages = _set_stage(state, "risk", "completed")
+    stages["purchase"] = "ready"
+    updates = {"risk": result, "stage_status": stages, "current_stage": "PURCHASE"}
+    state.update(updates)
     log_agent_activity(state, "RISK", "policy_decision", result, result.get("approved", False))
-    return {"risk": result, "stage_status": stages, "current_stage": "RISK"}
+    return updates
+
 
 
 def approval_node(state: BudBuyState) -> dict:

@@ -61,15 +61,18 @@ def test_risk_guard_is_deterministic():
     assert auto.approved and not auto.requires_user_confirmation
 
 
-def test_budget_targeting_prefers_85_to_100_percent_zone():
+def test_budget_targeting_prefers_90_to_100_percent_zone():
     from app.commerce.ranking import _price_value_score
-    # For budget ₹4,000:
-    # A product at ₹3,600 (90% of budget, in the >=85% zone) scores higher than ₹2,800 (70%) and ₹600 (15%)
-    top_zone = _price_value_score(3600, 4000)
-    mid_zone = _price_value_score(2800, 4000)
-    cheap_item = _price_value_score(600, 4000)
+    # For budget ₹10,000:
+    # A product at ₹9,500 (95% of budget, in the >=90% zone) scores top tier (>= 0.95),
+    # significantly beating ₹8,500 (85%) and low-end ₹5,000 (50%)
+    top_zone = _price_value_score(9500, 10000)
+    mid_zone = _price_value_score(8500, 10000)
+    low_zone = _price_value_score(5000, 10000)
     assert top_zone >= 0.95
-    assert top_zone > mid_zone > cheap_item
+    assert top_zone > mid_zone > low_zone
+    assert low_zone < 0.30
+
 
 
 def test_high_review_volume_significantly_boosts_quality_score():
@@ -105,7 +108,8 @@ if __name__ == "__main__":
     test_review_volume_has_real_influence()
     test_requirement_evidence_can_overrule_volume()
     test_over_budget_is_zero_price_fit()
-    test_budget_targeting_prefers_85_to_100_percent_zone()
+    test_budget_targeting_prefers_90_to_100_percent_zone()
+
     test_high_review_volume_significantly_boosts_quality_score()
     test_risk_guard_is_deterministic()
     test_user_goal_dynamic_propagation()

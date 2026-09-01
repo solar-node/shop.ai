@@ -13,7 +13,7 @@ except ImportError:
             return f
         return decorator
 
-DEFAULT_WEIGHTS = {"quality": 0.50, "feature_match": 0.30, "price_value": 0.12, "availability": 0.08}
+DEFAULT_WEIGHTS = {"quality": 0.42, "feature_match": 0.28, "price_value": 0.22, "availability": 0.08}
 
 PRIOR_RATING = 3.8
 PRIOR_REVIEW_WEIGHT = 100.0
@@ -47,26 +47,30 @@ def _bayesian_quality_score(rating: float, review_count: int) -> float:
 
 def _price_value_score(price: float, budget_max: float) -> float:
     """Budget value targeting score.
-    Prioritizes products utilizing the allocated budget effectively (85%-100% sweet spot)
-    to deliver better build quality and specs, rather than simply rewarding cheap low-spec items.
+    Prioritizes products utilizing the allocated budget effectively (>= 90% sweet spot, e.g. > ₹9,000 on ₹10,000)
+    to deliver better build quality and specs, rather than rewarding cheap low-end items (e.g. ₹5,000 on ₹10,000).
     """
     if price <= 0:
         return 0.0
     if budget_max <= 0:
-        return 0.85
+        return 0.90
     if price > budget_max:
         return 0.0
 
     ratio = price / budget_max
-    if 0.85 <= ratio <= 1.00:
-        # Ideal budget utilization zone (>= 85%): scales from 0.95 to 1.00
-        return round(0.95 + 0.05 * ((ratio - 0.85) / 0.15), 4)
-    elif 0.60 <= ratio < 0.85:
-        # Moderate budget zone (60%-85%): scales from 0.65 to 0.95
-        return round(0.65 + 0.30 * ((ratio - 0.60) / 0.25), 4)
+    if 0.90 <= ratio <= 1.00:
+        # Ideal budget utilization zone (>= 90%, e.g. ₹9,000–₹10,000 on ₹10,000 budget)
+        return round(0.95 + 0.05 * ((ratio - 0.90) / 0.10), 4)
+    elif 0.80 <= ratio < 0.90:
+        # High tier (80%-90%, e.g. ₹8,000–₹9,000 on ₹10,000 budget)
+        return round(0.70 + 0.25 * ((ratio - 0.80) / 0.10), 4)
+    elif 0.60 <= ratio < 0.80:
+        # Moderate zone (60%-80%, e.g. ₹6,000–₹8,000 on ₹10,000 budget)
+        return round(0.30 + 0.40 * ((ratio - 0.60) / 0.20), 4)
     else:
-        # Below 60% of budget: scaled from 0.25 to 0.65
-        return round(0.25 + 0.40 * (ratio / 0.60), 4)
+        # Low-end underspending zone (< 60%, e.g. ₹5,000 on ₹10,000 budget)
+        return round(0.05 + 0.25 * (ratio / 0.60), 4)
+
 
 
 
