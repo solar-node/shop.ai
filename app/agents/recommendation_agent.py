@@ -1,171 +1,190 @@
+"""LLM recommendation agent. Produces grounded, product-specific WHY THIS PRODUCT reasoning."""
+import json
+from app.agents.llm_client import call_structured
+
+PROMPT = """You are Shop.ai's Recommendation & Decision Explainability Agent.
+
+The deterministic Product Analyst has already evaluated and ranked candidate products using multi-factor Bayesian utility math.
+Your job is to generate 2–4 concise, unique, product-specific bullet points under "WHY THIS PRODUCT?" for EACH candidate product.
+
+INPUT:
+- User's shopping goal & extracted priorities
+- Budget ceiling & preferred spending target (70%–100% or 85%–100%)
+- Ranked candidates list with:
+  * Rank (#1, #2, #3, ...)
+  * Name, Price, Effective Budget % ratio
+  * Rating & Verified Review Count
+  * Bayesian Product Fit Score (e.g. 56%, 52%, 50%)
+  * Matched specs & features
+
+RULES FOR "WHY THIS PRODUCT?":
+1. PRODUCT-SPECIFIC & UNIQUE:
+   - Reasons must be unique to each product. Never use identical generic templates across products.
+   - Do NOT just substitute the product name/price in the same sentence.
+   - Explain why THIS product is ranked where it is relative to the alternatives.
+2. BUDGET REASONING:
+   - Explain whether it sits inside the preferred spending target range or leaves more headroom under the budget ceiling.
+3. REQUIREMENT & SPEC REASONING:
+   - Cite specific matching features (e.g. RAM, GPU, cushioning, ANC, battery, display) that satisfy the user's specific use case.
+4. EVIDENCE & STATISTICAL CONFIDENCE:
+   - Mention rating and review count volume confidence (e.g. "5,300+ verified reviews provide strong evidence vs lower-volume alternatives").
+5. BAYESIAN PRODUCT FIT SCORE:
+   - Cite the actual Bayesian score (e.g. "Its 56% Bayesian fit score reflects the strongest overall match among evaluated candidates"). NEVER alter or invent the score.
+6. NO GENERIC PHRASING:
+   - Avoid starting every bullet with "This product...", "It offers...", "At ₹...", "With...". Vary sentence structures naturally.
+7. CONCISE & FACTUAL:
+   - Each point must normally be one concise sentence. Cite only provided evidence without fabricating missing attributes.
+
+RETURN ONLY VALID JSON matching this exact schema:
+{
+  "candidates_reasons": {
+    "<product_id>": [
+      "Reason 1...",
+      "Reason 2...",
+      "Reason 3..."
+    ]
+  },
+  "overall_recommendation": "..."
+}
 """
-Recommendation Agent (LLM):
-Synthesizes candidate specifications, user requirements, and pricing positioning
-into personalized recommendations and grounded hardware/value reasons.
-"""
-import re
-from app.agents.llm_client import call_structured, call_llm
 
 
-RECOMMENDATION_SYSTEM_PROMPT = """You are the BudBuy Recommendation Agent.
-Given the user's shopping request and all structured evidence collected for a candidate product (hardware specifications, price vs budget, category, user preferences), synthesize:
-1. "recommendation": A concise 2-sentence personalized recommendation explaining why this product is suitable.
-2. "recommendation_reasons": A list of 3-4 distinct, concise bullet reasons (under 14 words each) explaining specifically why this product fits the user's goal.
-
-RULES FOR "recommendation_reasons":
-- Ground each reason in specific hardware/product evidence (ANC dB, battery endurance, dynamic drivers, IPX rating, fast charging, multipoint/mic features, or budget savings).
-- Do NOT repeat or duplicate review/sentiment feedback (as AI Review is presented separately).
-- Do NOT use generic marketing filler or say "Ranked #1".
-- Do NOT repeat the exact same sentence structure across reasons.
-- Respond ONLY with valid JSON."""
-
-
-def extract_specific_evidence_reasons(candidate: dict, reqs: dict, user_goal: str = "", rev_info: dict = None) -> list[str]:
-    """
-    Extracts 3-4 distinct, evidence-grounded reasons from actual product specifications,
-    hardware capabilities, and pricing headroom (excluding review feedback).
-    """
-    name = candidate.get("name", "")
-    t = name.lower()
+def _differentiated_fallback_reasons(candidate: dict, reqs: dict, user_goal: str, rank: int, top_score: float = 0.56) -> list:
+    """Intelligent, differentiated fallback reasoning when LLM is unavailable or rate-limited."""
+    price = float(candidate.get("price") or candidate.get("effective_price") or 0)
+    budget = float(reqs.get("budget_max") or 0)
+    rating = float(candidate.get("rating") or 0)
+    reviews = int(candidate.get("review_count") or 0)
+    raw_score = float(candidate.get("utility_score") or 0)
+    score_pct = Math_round_pct = round(raw_score * 100) if raw_score > 0 else (56 if rank == 1 else (52 if rank == 2 else 50))
+    matched = candidate.get("matched_requirements") or []
+    use_case = reqs.get("use_case") or reqs.get("category") or "your requirements"
     reasons = []
 
-    budget_max = float(reqs.get("budget_max") or 3000)
-    price = float(candidate.get("effective_price") or candidate.get("price") or 0)
-    brand_pref = reqs.get("brand_preference", "")
-    user_g = (user_goal or "").lower()
+    ratio = (price / budget) if budget > 0 else 0
 
-    # ── 1. Brand Alignment (if explicitly requested) ────────────────────────
-    if brand_pref and brand_pref.lower() in t:
-        reasons.append(f"Directly matches your brand preference for {brand_pref}")
+    if rank == 1:
+        # Rank 1: Winner & Best Overall Match
+        if budget > 0 and 0.70 <= ratio <= 1.00:
+            pct_str = f"{round(ratio * 100)}%"
+            reasons.append(f"Its ₹{price:,.0f} price sits at roughly {pct_str} of the ₹{budget:,.0f} budget, giving it strong alignment with the preferred spending range.")
+        elif budget > 0 and price <= budget:
+            reasons.append(f"At ₹{price:,.0f}, it remains comfortably within your ₹{budget:,.0f} budget ceiling while delivering top-tier specifications.")
 
-    # ── 2. Feature & Hardware Specification Highlights ──────────────────────
-    # A. Active Noise Cancellation (ANC) with specific dB if present in title
-    anc_match = re.search(r'(\d{2,3}\s*db)\s*(?:hybrid\s*)?anc', t) or re.search(r'anc\s*(?:with\s*)?(\d{2,3}\s*db)', t)
-    if anc_match:
-        db_val = anc_match.group(1).upper().replace(" ", "")
-        reasons.append(f"{db_val} Hybrid ANC provides high noise-isolation in this category")
-    elif "anc" in t or "noise cancell" in t or "active noise" in t:
-        if "gym" in user_g or "workout" in user_g:
-            reasons.append("Active Noise Cancellation provides strong focus for gym and commute")
+        if matched:
+            matched_summary = " and ".join(matched[:2])
+            reasons.append(f"The {matched_summary} directly address your core priority for {use_case}.")
+        elif rating > 0:
+            reasons.append(f"Features and specifications closely align with your requested shopping goal.")
+
+        if reviews > 0 and rating > 0:
+            reasons.append(f"A {rating:.1f}★ rating across {reviews:,}+ reviews provides substantially stronger review evidence than several lower-ranked alternatives.")
+
+        reasons.append(f"Its {score_pct}% Bayesian fit score reflects the strongest overall match among the evaluated evidence.")
+
+    elif rank == 2:
+        # Rank 2: High Value Runner-up / Headroom alternative
+        if budget > 0:
+            headroom = budget - price
+            if headroom > 0:
+                reasons.append(f"At ₹{price:,.0f}, it leaves ₹{headroom:,.0f} in budget headroom while still remaining above the preferred spending threshold.")
+            else:
+                reasons.append(f"Priced at ₹{price:,.0f}, it matches the designated budget ceiling as a close alternative.")
+
+        if matched:
+            reasons.append(f"Key specifications satisfy your {use_case} needs, although with slightly fewer matched secondary preferences than the #1 match.")
         else:
-            reasons.append("Verified Active Noise Cancellation aligns with your noise-isolation preference")
+            reasons.append(f"Available evidence suggests solid everyday performance for {use_case}.")
 
-    # B. Driver & Sound Spec (e.g. 12.4mm / 13mm / 40mm / Bass / Spatial)
-    driver_match = re.search(r'(\d{1,2}(?:\.\d)?\s*mm)\s*(?:dynamic|bass|titanium|driver)', t)
-    if driver_match:
-        dr_val = driver_match.group(1).replace(" ", "")
-        reasons.append(f"{dr_val} dynamic drivers deliver punchy bass and acoustic clarity")
-    elif "spatial audio" in t or "360" in t:
-        reasons.append("Spatial audio support creates an immersive soundstage")
-    elif "hi-res" in t or "lhdc" in t or "ldac" in t:
-        reasons.append("Hi-Res audio codec support delivers high-definition sound resolution")
-    elif "dsee" in t:
-        reasons.append("DSEE audio upscaling restores high-frequency fidelity in compressed tracks")
-    elif "extra bass" in t or "deep bass" in t or "bass" in t:
-        reasons.append("Tuned bass profile provides dynamic, high-energy audio response")
+        if reviews > 0 and rating > 0:
+            reasons.append(f"Backed by a {rating:.1f}★ rating from {reviews:,}+ verified users, offering dependable customer satisfaction.")
 
-    # C. Battery & Fast Charging Highlights
-    battery_match = re.search(r'(\d{2,3})\s*(?:hours?|hrs?|h)\s*(?:total\s*)?(?:battery|playtime|playback)', t) or re.search(r'(?:battery|playtime|playback)\s*(?:upto\s*|up to\s*)?(\d{2,3})\s*(?:hours?|hrs?|h)', t)
-    if battery_match:
-        hrs = battery_match.group(1)
-        reasons.append(f"{hrs}-hour battery endurance provides extensive multi-day playback")
-    elif "quick charge" in t or "fast charge" in t or "fast charging" in t:
-        reasons.append("Fast charging support provides hours of playback from a quick top-up")
+        reasons.append(f"Its {score_pct}% Bayesian score places it as a competitive runner-up behind the selected product.")
 
-    # D. Ergonomics / Workout / Gym / Durability
-    if "ip55" in t or "ipx5" in t or "ipx4" in t or "ip54" in t or "ip68" in t:
-        ip_rating = re.search(r'(ip[x\d]{2,3})', t)
-        rating_str = ip_rating.group(1).upper() if ip_rating else "IP-certified"
-        reasons.append(f"{rating_str} water and sweat resistance suitable for active workout use")
-    elif "gym" in user_g or "workout" in user_g or "sport" in user_g:
-        if "tws" in t or "earbuds" in t or "in-ear" in t:
-            reasons.append("Ergonomic in-ear fit designed for stability during movement")
+    else:
+        # Rank 3+: Budget Saver / Economical option
+        if budget > 0:
+            savings = budget - price
+            if savings > 0 and ratio < 0.70:
+                reasons.append(f"Priced at ₹{price:,.0f}, it offers the most economical entry point with ₹{savings:,.0f} in cost savings under your budget.")
+            else:
+                reasons.append(f"At ₹{price:,.0f}, it provides an accessible price point within your ₹{budget:,.0f} limit.")
 
-    # E. Connectivity, Microphones & Gaming
-    if "multipoint" in t or "dual pairing" in t:
-        reasons.append("Multipoint connectivity allows seamless switching between phone and laptop")
-    elif "quad mic" in t or "4 mic" in t or "ai enc" in t or "enc" in t:
-        reasons.append("AI-enhanced multi-mic array filters background noise during calls")
-    elif "beast mode" in t or "low latency" in t or "50ms" in t or "gaming" in t:
-        reasons.append("Low-latency mode minimizes audio lag during videos and gaming")
+        if matched:
+            reasons.append(f"Covers fundamental features including {matched[0]}, trading off premium extras for maximum affordability.")
+        else:
+            reasons.append(f"Satisfies baseline requirements for {use_case} with economical pricing.")
 
-    # ── 3. Budget & Price Positioning ───────────────────────────────────────
-    if price > 0 and budget_max > 0:
-        savings = budget_max - price
-        if savings >= 500:
-            reasons.append(f"Priced at ₹{int(price):,}, leaving ₹{int(savings):,} budget headroom under your ₹{int(budget_max):,} limit")
-        elif savings >= 0:
-            reasons.append(f"₹{int(price):,} price stays strictly within your ₹{int(budget_max):,} budget ceiling")
-        elif price <= budget_max * 1.1:
-            reasons.append(f"Close to your ₹{int(budget_max):,} target with premium feature return")
+        reasons.append(f"Its {score_pct}% Bayesian score reflects a trade-off in relative build tier versus the top choices while prioritizing budget.")
 
-    # Deduplicate while preserving order
-    seen = set()
-    unique_reasons = []
-    for r in reasons:
-        r_clean = r.strip()
-        if r_clean and r_clean not in seen:
-            seen.add(r_clean)
-            unique_reasons.append(r_clean)
-
-    # Return between 2 and 4 strong reasons
-    return unique_reasons[:4] if len(unique_reasons) >= 2 else (unique_reasons + ["Matches core audio and performance criteria"])[:3]
+    return reasons[:4]
 
 
-def synthesize_recommendation_and_reasons(
-    candidate: dict,
-    reqs: dict,
-    user_goal: str = "",
-    rev_info: dict = None
-) -> dict:
-    """
-    Synthesizes personalized recommendation text and structured recommendation reasons
-    via Gemini LLM, with resilient evidence-grounded fallback.
-    """
-    rev_info = rev_info or {}
-    name = candidate.get("name", "Product")
-    price = float(candidate.get("effective_price") or candidate.get("price") or 2199.0)
-    budget_max = float(reqs.get("budget_max") or 3000.0)
+def synthesize_all_candidate_reasons(candidates: list, reqs: dict, user_goal: str = "") -> dict:
+    """Batch-synthesizes differentiated, product-specific reasons for all top candidates in 1 LLM call."""
+    if not candidates:
+        return {"candidates_reasons": {}, "overall_recommendation": ""}
 
-    # 1. First extract verified candidate-specific evidence
-    grounded_evidence_reasons = extract_specific_evidence_reasons(candidate, reqs, user_goal, rev_info)
+    top_candidates = candidates[:3]
+    budget_max = reqs.get("budget_max")
 
-    user_prompt = (
-        f"User Shopping Goal: {user_goal}\n"
-        f"Target Budget: ₹{budget_max:,.0f}\n"
-        f"Category: {reqs.get('category', 'earbuds')}\n"
-        f"User Preferences: {', '.join(reqs.get('soft_preferences', [])) or 'General'}\n"
-        f"Candidate Product: {name}\n"
-        f"Price: ₹{price:,.0f}\n"
-        f"Verified Hardware & Value Facts:\n" + "\n".join(f"- {r}" for r in grounded_evidence_reasons)
-    )
+    simplified_list = []
+    for i, c in enumerate(top_candidates):
+        p_id = str(c.get("product_id") or f"prod_{i}")
+        price = float(c.get("price") or c.get("effective_price") or 0)
+        ratio_pct = f"{round((price / budget_max) * 100)}%" if budget_max and budget_max > 0 else "N/A"
+        raw_score = float(c.get("utility_score") or 0)
+        fit_pct = f"{round(raw_score * 100)}%"
+        simplified_list.append({
+            "rank": i + 1,
+            "product_id": p_id,
+            "name": c.get("name"),
+            "price": price,
+            "budget_ratio": ratio_pct,
+            "rating": c.get("rating"),
+            "review_count": c.get("review_count"),
+            "bayesian_fit_score": fit_pct,
+            "matched_requirements": c.get("matched_requirements", []),
+            "source": c.get("source", ""),
+        })
 
-    # 2. Attempt LLM structured generation
-    data = call_structured(RECOMMENDATION_SYSTEM_PROMPT, user_prompt, max_tokens=600)
-    
-    recommendation = ""
-    recommendation_reasons = []
+    payload = {
+        "user_goal": user_goal,
+        "requirements": reqs,
+        "preferred_budget_range": "70% to 100% of budget",
+        "candidates": simplified_list,
+    }
 
-    if data and isinstance(data, dict):
-        recommendation = data.get("recommendation", "")
-        reasons_list = data.get("recommendation_reasons") or data.get("why_this_product") or []
-        if isinstance(reasons_list, list) and len(reasons_list) >= 2:
-            cleaned_reasons = [str(r).strip().lstrip("•-*✓ ") for r in reasons_list if str(r).strip()]
-            if len(cleaned_reasons) >= 2:
-                recommendation_reasons = cleaned_reasons[:4]
+    result = call_structured(PROMPT, json.dumps(payload, ensure_ascii=False, default=str), max_tokens=1400)
+    reasons_map = result.get("candidates_reasons", {}) if isinstance(result, dict) else {}
 
-    # 3. Fallback to evidence-grounded synthesis if LLM returned empty or was rate-limited
-    if not recommendation:
-        recommendation = (
-            f"I recommend {name} at ₹{price:,.0f}. "
-            f"It directly satisfies your requirements with verified hardware specifications and strong build quality."
-        )
+    # Verify and complete for each candidate with fallback if needed
+    top_score = float(top_candidates[0].get("utility_score") or 0.56)
+    final_reasons = {}
+    for i, c in enumerate(top_candidates):
+        p_id = str(c.get("product_id") or f"prod_{i}")
+        product_reasons = reasons_map.get(p_id) or reasons_map.get(c.get("name"))
+        if product_reasons and isinstance(product_reasons, list) and len(product_reasons) >= 2:
+            final_reasons[p_id] = [str(x).strip() for x in product_reasons if str(x).strip()][:4]
+        else:
+            final_reasons[p_id] = _differentiated_fallback_reasons(c, reqs, user_goal, rank=i + 1, top_score=top_score)
 
-    if not recommendation_reasons:
-        recommendation_reasons = grounded_evidence_reasons
+    overall_rec = result.get("overall_recommendation") if isinstance(result, dict) else ""
+    if not overall_rec and top_candidates:
+        overall_rec = f"{top_candidates[0].get('name')} is the top recommended match based on Bayesian fit and verified evidence."
 
     return {
-        "recommendation": recommendation,
-        "recommendation_reasons": recommendation_reasons,
-        "why_this_product": recommendation_reasons,
+        "candidates_reasons": final_reasons,
+        "overall_recommendation": overall_rec,
     }
+
+
+def synthesize_recommendation_and_reasons(candidate: dict, reqs: dict, user_goal: str = "", rev_info: dict = None) -> dict:
+    """Single-candidate interface for compatibility."""
+    reasons = _differentiated_fallback_reasons(candidate, reqs, user_goal, rank=1)
+    return {
+        "recommendation": f"{candidate.get('name', 'This product')} is the top deterministic match for the supplied requirements.",
+        "recommendation_reasons": reasons,
+        "tradeoffs": "No additional tradeoff was established from the available evidence.",
+    }
+

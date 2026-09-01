@@ -21,6 +21,15 @@ async def merchant_session():
             yield session
 
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+
+
 class MerchantMCPClient:
     """Expose async MCP tools through a normal synchronous call()."""
 
@@ -33,8 +42,10 @@ class MerchantMCPClient:
             except json.JSONDecodeError:
                 return text
 
+    @traceable(run_type="tool", name="FastMCP Merchant Tool")
     def call(self, tool_name: str, **kwargs):
         return asyncio.run(self._call(tool_name, **kwargs))
+
 
 
 merchant_client = MerchantMCPClient()

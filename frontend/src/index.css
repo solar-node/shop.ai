@@ -119,6 +119,7 @@ input, textarea {
 }
 
 /* ── Layout Shell ───────────────────────────────────────────────────────── */
+.shopai-app-layout,
 .budbuy-app-layout {
   display: flex;
   height: 100vh;
@@ -126,6 +127,7 @@ input, textarea {
   overflow: hidden;
   background: var(--background);
 }
+
 
 /* ── 1. Sidebar ─────────────────────────────────────────────────────────── */
 .app-sidebar {
@@ -591,27 +593,61 @@ input, textarea {
   font-family: var(--font-mono);
 }
 
-.search-chips-container-two-lines {
+.search-chips-container-vertical {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
 }
 
-.search-chips-2x2-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+.search-chips-4rows-list {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  flex: 1;
+  width: 100%;
 }
 
-.suggestion-chip-compact {
+.suggestion-chip-multiline {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 6px 12px;
+  white-space: normal;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  width: 100%;
+  height: auto;
+  min-height: 42px;
+  cursor: pointer;
+  background: var(--input-background);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition: all 0.18s ease;
 }
+
+.suggestion-chip-multiline:hover {
+  background: var(--card-hover);
+  color: var(--foreground);
+  border-color: var(--sky);
+  transform: translateY(-1px);
+}
+
+.suggestion-chip-num {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--sky);
+  font-size: 12px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.suggestion-chip-text {
+  flex: 1;
+  word-break: break-word;
+}
+
 
 .search-chips-row {
   display: flex;
@@ -785,45 +821,377 @@ input, textarea {
 }
 
 /* ==========================================================================
-   AGENT EXECUTION PIPELINE (Segmented Connector Workflow)
-   ========================================================================== */
-/* ==========================================================================
-   AGENT EXECUTION PIPELINE (Full-Width Edge-Touching Segmented Workflow)
+   LANGGRAPH MULTI-AGENT ARCHITECTURE (Parallel Fan-Out / Fan-In Layout)
    ========================================================================== */
 .pipeline-stepper-container {
   background: var(--card-background);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 20px 32px 24px 32px;
-  margin-bottom: 20px;
-  position: relative;
-}
-
-.pipeline-stepper-wrapper {
+  padding: 22px 36px 26px 36px;
+  margin-bottom: 24px;
   width: 100%;
-  display: block;
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
-.pipeline-stepper-flow {
+.graph-architecture-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  align-items: center;
+  width: 100%;
+  max-width: 1040px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.graph-level-block {
+  width: 100%;
+  max-width: 680px;
+}
+
+.graph-node-card {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-top: 16px;
-  padding: 0 28px 52px 28px;
-  position: relative;
+  gap: 14px;
+  background: var(--input-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 18px;
+  transition: all 0.2s ease;
 }
 
-.flow-node-anchor {
-  position: relative;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
+
+.graph-node-card.node-done {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.04);
+}
+.graph-node-card.node-running {
+  border-color: #06b6d4;
+  background: rgba(6, 182, 212, 0.07);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.2);
+}
+.graph-node-card.node-waiting {
+  opacity: 0.75;
+}
+
+.graph-node-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--card-hover);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 3;
+  color: var(--sky);
+  flex-shrink: 0;
 }
+.node-done .graph-node-icon {
+  color: var(--emerald);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.graph-node-info {
+  flex: 1;
+}
+
+.graph-node-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.graph-node-meta {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+
+/* Branching connectors */
+.graph-branch-wires {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 20px;
+  position: relative;
+  width: 100%;
+  max-width: 680px;
+}
+.wire-vertical-stem {
+  width: 2px;
+  height: 10px;
+  background: var(--border);
+}
+.wire-horizontal-fork {
+  width: 80%;
+  height: 2px;
+  background: var(--border);
+}
+.graph-branch-wires.reverse {
+  transform: rotate(180deg);
+}
+
+/* Parallel Research Row (3 Subnodes) */
+.graph-parallel-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 980px;
+}
+
+.graph-subnode-card {
+  background: var(--input-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+.graph-subnode-card.node-done {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.04);
+}
+.graph-subnode-card.node-running {
+  border-color: #06b6d4;
+  background: rgba(6, 182, 212, 0.07);
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
+}
+
+.graph-subnode-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subnode-icon {
+  color: var(--sky);
+}
+.node-done .subnode-icon {
+  color: var(--emerald);
+}
+
+.subnode-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.subnode-desc {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  line-height: 1.35;
+}
+
+.subnode-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.parallel-tag {
+  font-size: 9.5px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.4px;
+}
+
+/* Sequential Downstream Grid (Stages 4..7) */
+.graph-sequential-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.graph-seq-card {
+  background: var(--input-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+.graph-seq-card.node-done {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.04);
+}
+.graph-seq-card.node-running {
+  border-color: #06b6d4;
+  background: rgba(6, 182, 212, 0.07);
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
+}
+.graph-seq-card.node-waiting-approval {
+  border-color: var(--amber);
+  background: rgba(245, 158, 11, 0.08);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+}
+
+.seq-card-num {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  color: var(--sky);
+}
+.node-done .seq-card-num {
+  color: var(--emerald);
+}
+
+.seq-card-content {
+  flex: 1;
+}
+
+.seq-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.seq-card-desc {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.graph-node-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+  align-self: flex-start;
+}
+
+.flow-badge-done {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.flow-badge-running {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+.flow-badge-waiting {
+  color: var(--muted-foreground);
+  background: rgba(255, 255, 255, 0.04);
+}
+.flow-badge-approval {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+/* ── Budget Targeting & Dynamic Feature Pills ─────────────────────────── */
+.budget-targeting-indicator {
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}
+.budget-targeting-indicator.optimal {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+.budget-targeting-indicator.low {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+}
+.budget-targeting-indicator.high {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.dynamic-specs-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.spec-feature-pill {
+  font-size: 11.5px;
+  color: var(--foreground);
+  background: var(--input-background);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+/* ── Enhanced Approval Quickbar ────────────────────────────────────────── */
+.approval-product-quickbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--input-background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+
+.approval-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--card-hover);
+}
+
+.approval-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.approval-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.approval-pricing-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.approval-price {
+  color: #10b981;
+  font-weight: 700;
+}
+
+.approval-merchant, .approval-budget {
+  color: var(--text-secondary);
+}
+
+.approval-dot {
+  color: var(--border);
+}
+
 
 .flow-node-circle {
   width: 28px;
@@ -2408,6 +2776,7 @@ input, textarea {
 .light-theme html,
 .light-theme body,
 .light-theme #root,
+.light-theme .shopai-app-layout,
 .light-theme .budbuy-app-layout {
   background: var(--background) !important;
   color: var(--foreground) !important;

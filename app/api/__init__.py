@@ -1,1 +1,2 @@
-# BudBuy API package
+# Shop.ai API package
+

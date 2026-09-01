@@ -13,14 +13,6 @@ load_dotenv()
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
 
-TEST_CARD = {
-    "number": "4111111111111111",
-    "expiry_month": "12",
-    "expiry_year": "2030",
-    "cvv": "123",
-    "name": "Aditya Singh",
-}
-
 
 def get_client():
     key_id = os.environ.get("RAZORPAY_KEY_ID", "") or RAZORPAY_KEY_ID
@@ -34,6 +26,16 @@ def get_client():
 
 
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+
+
+@traceable(run_type="tool", name="Razorpay Create Order")
 def create_order(amount_rupees: float, receipt: str, notes: dict = None):
     """Creates a Razorpay order (paise-denominated). Returns dict with 'id' etc."""
     client = get_client()
@@ -55,6 +57,7 @@ def fetch_payment(payment_id: str):
     return client.payment.fetch(payment_id)
 
 
+@traceable(run_type="tool", name="Razorpay Verify Payment Signature")
 def verify_payment_signature(razorpay_order_id, razorpay_payment_id, razorpay_signature):
     client = get_client()
     try:
@@ -66,6 +69,7 @@ def verify_payment_signature(razorpay_order_id, razorpay_payment_id, razorpay_si
         return True
     except razorpay.errors.SignatureVerificationError:
         return False
+
 
 
 def create_payment_link(amount_rupees: float, description: str, reference_id: str, notes: dict = None):
@@ -99,10 +103,21 @@ def execute_s2s_card_payment(amount_rupees: float, receipt: str, description: st
 
     In Razorpay Test Mode this bypasses OTP entirely for the test card.
     """
-    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
-        raise RuntimeError("Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET env vars.")
+    key_id = os.environ.get("RAZORPAY_KEY_ID", "")
+    key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+    card = {
+        "number": os.environ.get("RAZORPAY_TEST_CARD_NUMBER", ""),
+        "expiry_month": os.environ.get("RAZORPAY_TEST_CARD_EXPIRY_MONTH", ""),
+        "expiry_year": os.environ.get("RAZORPAY_TEST_CARD_EXPIRY_YEAR", ""),
+        "cvv": os.environ.get("RAZORPAY_TEST_CARD_CVV", ""),
+        "name": os.environ.get("RAZORPAY_TEST_CARD_NAME", ""),
+    }
+    if not key_id or not key_secret:
+        raise RuntimeError("Set Razorpay credentials in environment variables.")
+    if not all(card.values()):
+        raise RuntimeError("Set RAZORPAY_TEST_CARD_* variables before using S2S test payment.")
 
-    auth = (RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
+    auth = (key_id, key_secret)
     amount_paise = int(round(amount_rupees * 100))
 
     # Step 1: Create Razorpay Order
@@ -113,7 +128,7 @@ def execute_s2s_card_payment(amount_rupees: float, receipt: str, description: st
             "amount":   amount_paise,
             "currency": "INR",
             "receipt":  receipt,
-            "notes":    notes or {"agent": "BudBuy Autonomous Buyer", "mandate": "SUB_2500_AUTOPAY"},
+            "notes":    notes or {"agent": "Shop.ai Autonomous Buyer", "mandate": "SUB_2500_AUTOPAY"},
         },
         timeout=15,
     )
@@ -126,14 +141,15 @@ def execute_s2s_card_payment(amount_rupees: float, receipt: str, description: st
         "amount":    amount_paise,
         "currency":  "INR",
         "order_id":  order_id,
-        "email":     "agent@budbuy.ai",
+        "email":     "agent@shop.ai",
+
         "contact":   "9999999999",
         "method":    "card",
-        "card[number]":       TEST_CARD["number"],
-        "card[expiry_month]": TEST_CARD["expiry_month"],
-        "card[expiry_year]":  TEST_CARD["expiry_year"],
-        "card[cvv]":          TEST_CARD["cvv"],
-        "card[name]":         TEST_CARD["name"],
+        "card[number]":       card["number"],
+        "card[expiry_month]": card["expiry_month"],
+        "card[expiry_year]":  card["expiry_year"],
+        "card[cvv]":          card["cvv"],
+        "card[name]":         card["name"],
     }
 
     pay_resp = requests.post(

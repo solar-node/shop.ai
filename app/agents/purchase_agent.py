@@ -4,7 +4,16 @@ from database.models import Payment, get_engine, get_session_factory
 from app.mcp.client import merchant_client
 from app.payments.idempotency import create_or_get_payment, reconcile_payment
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+
 _engine = get_engine()
+
 _Session = get_session_factory(_engine)
 
 
@@ -33,7 +42,7 @@ def reserve_and_checkout(session_id: str, product_id: str, effective_price: floa
     try:
         payment = create_or_get_payment(
             db, session_id=session_id, cart_id=checkout["cart_id"],
-            amount=effective_price, description=f"BudBuy order for {product_id}",
+            amount=effective_price, description=f"Shop.ai order for {product_id}",
         )
         return {
             "status": "AWAITING_PAYMENT",
@@ -46,8 +55,10 @@ def reserve_and_checkout(session_id: str, product_id: str, effective_price: floa
         db.close()
 
 
+@traceable(run_type="tool", name="Prepare Checkout & Stock Lock")
 def prepare_checkout(session_id: str, product_id: str, effective_price: float) -> dict:
     """Reserve stock, add the product to a cart, and create a Razorpay order."""
+
     checkout = _reserve_cart(session_id, product_id, effective_price)
     if checkout.get("status") == "FAILED":
         return checkout
@@ -58,8 +69,9 @@ def prepare_checkout(session_id: str, product_id: str, effective_price: float) -
         order = create_order(
             amount_rupees=effective_price,
             receipt=checkout["cart_id"],
-            notes={"session_id": session_id, "product_id": product_id, "agent": "BudBuy"},
+            notes={"session_id": session_id, "product_id": product_id, "agent": "Shop.ai"},
         )
+
         payment = Payment(
             cart_id=checkout["cart_id"],
             idempotency_key=f"{session_id}:{checkout['cart_id']}",

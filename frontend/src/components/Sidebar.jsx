@@ -11,10 +11,12 @@ export default function Sidebar({
   onSelectConversation = null,
 }) {
   const defaultConversations = [
-    { id: "c1", title: "Find noise-cancelling headphones" },
-    { id: "c2", title: "Compare travel laptops" },
-    { id: "c3", title: "Find products within my budget" },
+    { id: "c1", title: "Wireless earbuds under ₹3,000 for gym" },
+    { id: "c2", title: "Coding & ML laptop under ₹70,000" },
+    { id: "c3", title: "Camera smartphone under ₹25,000" },
+    { id: "c4", title: "Running shoes under ₹4,000" },
   ];
+
 
   const threadList = conversations.length > 0 ? conversations : defaultConversations;
 
@@ -30,7 +32,8 @@ export default function Sidebar({
             <rect x="3" y="14" width="7" height="7" rx="1.5" />
           </svg>
         </div>
-        <span className="brand-name">budbuy</span>
+        <span className="brand-name">shop.ai</span>
+
         <span className="brand-badge-beta">BETA</span>
       </div>
 

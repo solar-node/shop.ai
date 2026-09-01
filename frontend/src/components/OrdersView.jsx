@@ -1,18 +1,9 @@
 import React from "react";
 
 export default function OrdersView({ orders = [] }) {
-  const defaultOrders = [
-    {
-      id: "ord_1725039123",
-      product_name: "Sony WH-1000XM5",
-      merchant: "Amazon",
-      status: "Confirmed",
-      total: 2199,
-      date: "Just now",
-    },
-  ];
+  const orderList = orders;
 
-  const orderList = orders.length > 0 ? orders : defaultOrders;
+
 
   return (
     <div className="view-panel-container">
@@ -30,7 +21,7 @@ export default function OrdersView({ orders = [] }) {
           <span>Status</span>
         </div>
 
-        {orderList.map((o) => (
+        {orderList.length ? orderList.map((o) => (
           <div key={o.id} className="orders-table-row">
             <span style={{ fontFamily: "var(--font-mono)", color: "var(--muted-foreground)" }}>{o.id}</span>
             <span style={{ fontWeight: 600, color: "var(--foreground)" }}>{o.product_name}</span>
@@ -42,7 +33,9 @@ export default function OrdersView({ orders = [] }) {
               ✓ {o.status}
             </span>
           </div>
-        ))}
+        )) : (
+          <div className="orders-empty-state">No purchases yet.</div>
+        )}
 
       </div>
     </div>

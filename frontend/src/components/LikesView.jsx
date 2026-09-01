@@ -36,7 +36,8 @@ export default function LikesView({ likedProducts = [], onRemoveLike, onSelectPr
                   <span className="store-pill-tag">{p.source || "Amazon"}</span>
                 </div>
                 <div className="product-price-action-row">
-                  <span className="price-current-bold">${p.price}</span>
+                  <span className="price-current-bold">₹{typeof p.price === "number" ? Math.round(p.price).toLocaleString("en-IN") : p.price}</span>
+
                   <button
                     className="select-candidate-btn btn-selected"
                     onClick={() => onSelectProduct && onSelectProduct(p)}

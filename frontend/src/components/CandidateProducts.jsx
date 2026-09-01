@@ -7,7 +7,9 @@ export default function CandidateProducts({
   likedIds = [],
   onToggleLike,
   loading = false,
+  budgetMax = 0,
 }) {
+
   const activeIdx = typeof selectedIndex === "number" ? selectedIndex : 0;
 
   const handleSelect = (idx) => {
@@ -17,18 +19,7 @@ export default function CandidateProducts({
   };
 
 
-  const getStoreBadge = (source = "") => {
-    const s = (source || "").toLowerCase();
-    if (s.includes("amazon")) return "Amazon.in";
-    if (s.includes("flipkart")) return "Flipkart";
-    if (s.includes("croma")) return "Croma";
-    if (s.includes("oneplus")) return "OnePlus";
-    if (s.includes("boat")) return "boAt";
-    if (s.includes("myntra")) return "Myntra";
-    if (s.includes("reliance")) return "Reliance Digital";
-    if (s.includes("tatacliq") || s.includes("tata cliq")) return "Tata CLiQ";
-    return source || "Verified Store";
-  };
+  const getStoreBadge = (source = "") => source || "Marketplace";
 
   const formatRupees = (val) => {
     if (!val && val !== 0) return "—";
@@ -51,28 +42,28 @@ export default function CandidateProducts({
         <div>
           <h3 className="section-title">Candidate products & AI evaluation</h3>
           <p className="section-subtitle">
-            Ranked live from SerpAPI Google Shopping & verified e-commerce marketplace feeds
+            Ranked from live marketplace evidence and agent research
           </p>
         </div>
         <div className="live-model-badge">
           <span className="verified-dot-green" />
-          <span>Real SerpAPI Products ({candidates.length} live matches)</span>
+          <span>Live candidates ({candidates.length} matches)</span>
         </div>
       </div>
 
       <div className="candidate-cards-grid candidate-cards-full-grid">
         {listToRender.map((c, idx) => {
           const isSelected = idx === activeIdx;
-          const rawScore = c.utility_score || (0.96 - idx * 0.04);
+          const rawScore = Number(c.utility_score) || 0;
 
-          const matchPct = Math.min(Math.max(Math.round(rawScore * 100), 50), 98);
+          const matchPct = Math.round(rawScore * 100);
           const storeBadge = getStoreBadge(c.source);
           const currentPrice = formatRupees(c.effective_price || c.price);
           const oldPrice = c.old_price ? formatRupees(c.old_price) : null;
           const isLiked = Array.isArray(likedIds) && likedIds.includes(c.product_id || c.name);
           const numRating = Number(c.rating);
-          const ratingVal = !isNaN(numRating) && numRating > 0 ? numRating.toFixed(1) : "4.4";
-          const reviewsCount = typeof c.review_count === "number" ? c.review_count.toLocaleString("en-IN") : (c.review_count || "1,200");
+          const ratingVal = !isNaN(numRating) && numRating > 0 ? numRating.toFixed(1) : "—";
+          const reviewsCount = typeof c.review_count === "number" ? c.review_count.toLocaleString("en-IN") : "—";
 
           const sentimentLabel = c.sentiment_label || (
             numRating >= 4.4 ? "Very positive feedback" :
@@ -81,7 +72,24 @@ export default function CandidateProducts({
             "Some concerns in customer feedback"
           );
 
-          const aiInsight = c.ai_insight || c.review_summary || "Strong customer satisfaction signal with consistently positive feedback and good evidence confidence.";
+          const aiInsight = c.ai_insight || c.review_summary || (c.review_evidence?.evidence_summary || "Review evidence was not available.");
+
+          const rawPrice = Number(c.effective_price || c.price) || 0;
+          const budgetNum = Number(budgetMax) || 0;
+          let budgetFitTag = null;
+          if (budgetNum > 0 && rawPrice > 0) {
+            if (rawPrice >= 0.85 * budgetNum && rawPrice <= budgetNum) {
+              budgetFitTag = { text: "Optimal budget fit (85–100% target)", type: "optimal" };
+            } else if (rawPrice < 0.85 * budgetNum) {
+              const target85 = Math.round(0.85 * budgetNum).toLocaleString("en-IN");
+              budgetFitTag = { text: `Below 85% target budget (< ₹${target85})`, type: "low" };
+            } else {
+              budgetFitTag = { text: `Exceeds ₹${budgetNum.toLocaleString("en-IN")} ceiling`, type: "high" };
+            }
+          }
+
+
+          const matchedReqs = Array.isArray(c.matched_requirements) ? c.matched_requirements.slice(0, 4) : [];
 
           return (
             <div
@@ -134,34 +142,38 @@ export default function CandidateProducts({
                   <span className="star-rating-badge">★ {ratingVal}</span>
                   <span className="review-count-text">({reviewsCount}+ verified reviews)</span>
                   <span style={{ color: "var(--border)" }}>·</span>
-                  <span className="delivery-tag-text">{c.delivery || "Free Delivery · 2-3 days"}</span>
+                  <span className="delivery-tag-text">{c.delivery || "Delivery details unavailable"}</span>
                 </div>
 
-                {/* Product Fit Match Progress */}
+                {/* Product Fit Match Progress & Budget Range Fit */}
                 <div className="bayesian-score-group">
                   <div className="bayesian-label-row">
-                    <span>Product Fit</span>
-                    <span className="bayesian-pct">Best fit · {matchPct}%</span>
+                    <span>Product Fit (Bayesian Score)</span>
+                    <span className="bayesian-pct">Score · {matchPct}%</span>
                   </div>
                   <div className="bayesian-bar-track">
                     <div className="bayesian-bar-fill" style={{ width: `${matchPct}%` }} />
                   </div>
+                  {budgetFitTag && (
+                    <div className={`budget-targeting-indicator ${budgetFitTag.type}`}>
+                      <span>{budgetFitTag.text}</span>
+                    </div>
+                  )}
                 </div>
 
-
-                {/* AI Review Box */}
-                <div className="sentiment-analysis-box">
-                  <div className="sentiment-header">
-                    <span className="sentiment-dot-green" />
-                    <span className="sentiment-title">AI REVIEW</span>
-                    <span className="sentiment-pct-badge">{sentimentLabel}</span>
+                {/* Dynamic Extracted Feature Tags */}
+                {matchedReqs.length > 0 && (
+                  <div className="dynamic-specs-tag-row">
+                    {matchedReqs.map((req, rIdx) => (
+                      <span key={rIdx} className="spec-feature-pill">
+                        ✓ {req}
+                      </span>
+                    ))}
                   </div>
-                  <p className="sentiment-text">
-                    "{aiInsight}"
-                  </p>
-                </div>
+                )}
 
                 {/* Dynamic WHY THIS PRODUCT? Section */}
+
                 {(() => {
                   const reasons = (Array.isArray(c.recommendation_reasons) && c.recommendation_reasons.length > 0 && c.recommendation_reasons) ||
                                   (Array.isArray(c.why_this_product) && c.why_this_product.length > 0 && c.why_this_product) ||
@@ -186,6 +198,7 @@ export default function CandidateProducts({
                     </div>
                   );
                 })()}
+
 
 
                 <div className="product-price-action-row">

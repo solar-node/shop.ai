@@ -1,152 +1,220 @@
-# BudBuy — Autonomous Multi-Agent Shopping Assistant
+# shop.ai — Autonomous Shopping Agent
 
-> AI-native shopping assistant built with **LangGraph**, **FastAPI**, **React**, and **Razorpay**. Researches live marketplace products, performs Bayesian volume-weighted ranking, synthesizes evidence-grounded recommendations, enforces deterministic policy risk gates, and completes Razorpay test checkouts.
+shop.ai is an AI-native shopping agent that turns a natural-language shopping goal into a researched, evidence-backed and policy-checked purchase.
 
----
 
-## 🏛️ System Architecture (LangGraph)
+The architecture is intentionally **category-extensible**: the LLM decides what the user wants and which attributes matter instead of maintaining a growing list of product categories and specifications in Python.
 
-```
-                            USER SHOPPING GOAL
-                                    │
-                                    ▼
-       1. Intent Agent              (Gemini NLP requirements extraction + regex fallback)
-                                    │
-                                    ▼
-       2. Research Agent            (SerpAPI Google Shopping & Amazon India live scraper)
-                                    │
-                                    ▼
-       3. Product Analyst           (Deterministic Bayesian rating & review-volume ranking)
-                                    │
-                                    ▼
-       4. Evaluation & Rec.         (Feature extraction, review confidence & dynamic reasons)
-                                    │
-                                    ▼
-       5. Risk Guard                (Deterministic budget, merchant trust & stock policy gate)
-                                    │
-                       ┌────────────┴────────────┐
-                       ▼                         ▼
-                 approval_node             purchase_node
-             (Human-in-the-loop)       (Auto-checkout authorized)
-                       │                         │
-                       ▼ (User Confirms)         ▼
-                 purchase_node                  END
-                       │
-                       ▼ (Razorpay Checkout & HMAC Verification)
-                      END
-```
+## Architecture
 
----
-
-## 💡 Core Engineering Principles
-
-1. **Deterministic vs LLM Separation**:
-   - **LLMs** are used where natural language understanding and evidence synthesis add value (intent parsing, review sentiment summarization, hardware feature extraction).
-   - **Deterministic Algorithms** are strictly enforced for product rankings (`_bayesian_quality_score`), pricing calculations, risk policy checks, and Razorpay HMAC signature verification. The LLM is never allowed to arbitrarily pick a winner or bypass financial limits.
-2. **Volume-Weighted Bayesian Ranking**:
-   - Incorporates Bayesian mean prior shrinkage ($m=150.0, C=3.8$) and logarithmic review volume scaling so battle-tested products ($4.0★$ with 12,000 reviews) reliably outrank early products ($4.3★$ with 400 reviews) while penalizing low-sample noise.
-3. **Resilient Two-Tier Fallbacks**:
-   - All external LLM calls implement exponential backoff on HTTP 429 quota exhaustion with deterministic regex/heuristic fallbacks to ensure uninterrupted execution.
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|---|---|
-| **Frontend** | React 18, Vite, Lucide SVG Icons, JetBrains Mono |
-| **Backend API** | FastAPI, Uvicorn, Python 3.11 |
-| **Agent Framework** | **LangGraph** (`StateGraph`, TypedDict State, Checkpointing) |
-| **LLM Reasoning** | **Google Gemini** (`google-genai`) |
-| **Marketplace Scraper** | SerpAPI (Google Shopping India) |
-| **Merchant Protocol** | Model Context Protocol (MCP stdio client/server) |
-| **Database** | SQLite + SQLAlchemy |
-| **Payment Gateway** | Razorpay Test API + HMAC-SHA256 Signature Verification |
-
----
-
-## 🚀 Setup & Installation
-
-### 1. Clone Repository & Setup Environment
-```bash
-git clone https://github.com/your-username/budbuy.git
-cd budbuy
-
-# Create and activate virtual environment (or use conda)
-python3 -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+```text
+                         USER SHOPPING GOAL
+                                  │
+                                  ▼
+                    ┌────────────────────────┐
+                    │ Intent / Shopping      │
+                    │ Planner — LLM          │
+                    └────────────┬───────────┘
+                                 │
+                 ┌───────────────┼───────────────┐
+                 ▼               ▼               ▼
+        Marketplace         Product Info      Review / Trust
+        Research            Research           Research
+        Tool/API            LLM                Python
+                 └───────────────┬───────────────┘
+                                 ▼
+                    ┌────────────────────────┐
+                    │ Evidence Synthesis      │
+                    │ LLM                     │
+                    └────────────┬───────────┘
+                                 ▼
+                    ┌────────────────────────┐
+                    │ Product Analyst         │
+                    │ Deterministic Python    │
+                    │ Bayesian Ranking        │
+                    └────────────┬───────────┘
+                                 ▼
+                    ┌────────────────────────┐
+                    │ Recommendation LLM      │
+                    │ WHY THIS PRODUCT?       │
+                    └────────────┬───────────┘
+                                 ▼
+                    ┌────────────────────────┐
+                    │ Risk Guard              │
+                    │ Deterministic Python    │
+                    └────────────┬───────────┘
+                                 ▼
+                              Approval?
+                             /         \
+                           YES          AUTO
+                            │             │
+                            └──────┬──────┘
+                                   ▼
+                            Purchase Agent
+                                   │
+                                Razorpay
 ```
 
-### 2. Configure Environment Variables
-```bash
-cp .env.example .env
-```
-Edit `.env` with your API keys:
-- `GEMINI_API_KEY`: Google AI Studio Gemini API Key
-- `RAZORPAY_KEY_ID`: Razorpay Test Mode Key ID
-- `RAZORPAY_KEY_SECRET`: Razorpay Test Mode Key Secret
-- `SERPAPI_KEY`: SerpAPI Google Shopping search key
+### Why this split?
 
-### 3. Initialize Database
-```bash
-python3 scripts/seed_database.py
-```
+- **LLMs** handle natural language, category understanding, attribute discovery, evidence synthesis and explanations.
+- **Python** handles arithmetic, ranking, inventory, financial policy and payment verification.
+- The LLM is never allowed to change the deterministic ranking or bypass the Risk Guard.
 
-### 4. Run Automated Test Suite
-```bash
-python3 tests/test_pipeline.py
-```
+### Parallel research
 
-### 5. Start Backend & Frontend
+After intent extraction, three independent branches execute concurrently in LangGraph:
 
-**Terminal 1 — FastAPI Backend:**
-```bash
-uvicorn app.api.main:app --reload --port 8000
-```
+1. **Marketplace Research** — retrieves live listings and factual marketplace fields.
+2. **Product Info Research** — an LLM determines which attributes are important for the current request.
+3. **Review/Trust Research** — prepares the statistical review-evidence model.
 
-**Terminal 2 — React Frontend:**
-```bash
-cd frontend
-npm install --legacy-peer-deps
-npm run dev
-# → Open http://localhost:5173
+The branches join at **Evidence Synthesis**, where an LLM combines their outputs into normalized product evidence.
+
+## Ranking
+
+The Product Analyst uses deterministic Bayesian review evidence rather than asking an LLM to choose the winner.
+
+For rating `R` and review count `v`:
+
+```text
+Adjusted rating = (v × R + m × C) / (v + m)
 ```
 
----
+where `m = 150` and `C = 3.8`.
 
-## 🧪 Testing Realistic Shopping Queries
+Review-volume confidence is logarithmically scaled so evidence volume matters strongly without allowing review count alone to dominate product fit.
 
-1. Open `http://localhost:5173`.
-2. Try a realistic multi-constraint query:
-   - *"Find ANC earbuds under ₹3000 for gym"*
-   - *"Best wireless earbuds with deep bass under ₹2500"*
-3. Watch the sequential multi-agent execution pipeline illuminate stage-by-stage as live candidates are ranked and verified.
-4. Click **Select** on candidate cards to sync Risk Guard verification and complete payment in Razorpay Test Mode.
+The final utility combines:
 
----
-
-## 📂 Project Structure
-
+```text
+45% quality/evidence
+35% requirement match
+10% price fit
+10% availability
 ```
-budbuy/
+
+Requirement matching is based on the **LLM-normalized evidence** rather than category-specific Python rules.
+
+## Grounded recommendations
+
+The Recommendation Agent receives the ranked candidate plus the evidence used to evaluate it. It produces:
+
+- personalized recommendation
+- 3–4 **WHY THIS PRODUCT?** reasons
+- tradeoffs
+
+Reasons must be supported by supplied evidence. The system does not fabricate specifications or customer stories.
+
+## Purchase safety
+
+The Risk Guard is deliberately not an LLM.
+
+It checks:
+
+- verified budget ceiling
+- verified product price
+- merchant trust evidence
+- confirmed stock
+- optional autonomous purchase limit
+
+Normal purchases require confirmation. Auto-buy can proceed only when the user's explicit auto-purchase limit permits it.
+
+Razorpay payment completion is accepted only after backend signature verification.
+
+## Project Structure
+
+```text
+shop.ai/
 ├── app/
-│   ├── agents/           orchestrator.py, research_agent.py, review_agent.py, recommendation_agent.py, risk_agent.py, purchase_agent.py
-│   ├── api/              FastAPI REST routes (main.py)
-│   ├── commerce/         ranking.py (Bayesian scoring), policies.py (Risk Guard)
-│   ├── inventory/        reservation.py (Concurrency-safe inventory reservation)
-│   ├── mcp/              merchant_server.py + client.py (Model Context Protocol)
-│   ├── payments/         razorpay_client.py, idempotency.py
-│   └── observability/    logger.py (Decision Ledger)
-├── database/             models.py (SQLAlchemy schema)
-├── frontend/             React 18 + Vite SPA
-│   └── src/              App.jsx, components/, hooks/, api/
-├── tests/                test_pipeline.py (Integration & unit test suite)
-├── scripts/              seed_database.py
+│   ├── agents/
+│   │   ├── orchestrator.py
+│   │   ├── research_agent.py
+│   │   ├── product_info_agent.py
+│   │   ├── review_trust_agent.py
+│   │   ├── evidence_agent.py
+│   │   ├── recommendation_agent.py
+│   │   ├── risk_agent.py
+│   │   ├── purchase_agent.py
+│   │   └── llm_client.py
+│   ├── commerce/
+│   │   ├── ranking.py
+│   │   └── policies.py
+│   ├── integrations/
+│   │   └── product_scraper.py
+│   ├── mcp/
+│   ├── payments/
+│   ├── inventory/
+│   ├── observability/
+│   └── api/
+├── database/
+├── frontend/
+├── tests/
+├── scripts/
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 └── README.md
 ```
+
+## Setup
+
+### Backend
+
+```bash
+conda create -n shopai python=3.11
+conda activate shopai
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+
+Set the required values in `.env`:
+
+```text
+GEMINI_API_KEY=...
+SERPAPI_KEY=...
+RAZORPAY_KEY_ID=...
+RAZORPAY_KEY_SECRET=...
+```
+
+`SCRAPERAPI_KEY` is optional.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Start the API
+
+From the repository root:
+
+```bash
+uvicorn app.api.main:app --reload
+```
+
+Then open the frontend URL shown by Vite.
+
+## Testing
+
+Backend syntax / unit checks:
+
+```bash
+python -m pytest tests/test_pipeline.py
+```
+
+Frontend production build:
+
+```bash
+cd frontend
+npm run build
+```
+
+## Security
+
+Never commit `.env`, database files, API keys or generated frontend artifacts. Use `.env.example` as the configuration template.
+
+Razorpay credentials remain backend-only. The frontend receives only the public Razorpay key ID required by Checkout.

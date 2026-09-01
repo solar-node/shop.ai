@@ -1,1 +1,2 @@
-"""BudBuy Multi-Agent System"""
+"""Shop.ai Multi-Agent System"""
+

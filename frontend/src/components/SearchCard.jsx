@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
 
 const STARTER_PROMPTS = [
-  "Find ANC earbuds under ₹3000 for gym",
-  "Compare top noise-cancelling headphones under ₹5000",
-  "Best wireless earbuds with 40h+ battery under ₹2000",
-  "Auto-buy boAt or OnePlus earbuds under ₹2500",
+  "Find me good wireless earbuds under ₹3,000 for gym workouts. I want good sound quality, decent battery life, and preferably ANC and some water or sweat resistance.",
+  "I need a laptop under ₹70,000 mainly for coding, Python and some machine learning work. I want at least 16GB RAM and good performance, with a dedicated GPU if possible.",
+  "Find me a good smartphone under ₹25,000. My main priority is a good camera, but I also want good battery life, fast charging and a good display.",
+  "Find me a good pair of running shoes under ₹4,000 for regular jogging and workouts. I want something comfortable with good cushioning, grip and durability, and preferably lightweight.",
 ];
+
+
 
 export default function SearchCard({ onSend, loading, currentGoal, isWorking }) {
   const [inputVal, setInputVal] = useState("");
@@ -91,24 +93,26 @@ export default function SearchCard({ onSend, loading, currentGoal, isWorking }) 
         <span className="badge-natural-language">AUTONOMOUS AGENT</span>
       </div>
 
-      {/* Starter Prompts Row (4 prompts in 2 lines) */}
+      {/* Starter Prompts - 4 full rows */}
       {!isWorking && (
-        <div className="search-chips-container-two-lines">
+        <div className="search-chips-container-vertical">
           <span className="chips-label">Try asking:</span>
-          <div className="search-chips-2x2-grid">
+          <div className="search-chips-4rows-list">
             {STARTER_PROMPTS.map((prompt, i) => (
               <button
                 key={i}
-                className="suggestion-chip-btn suggestion-chip-compact"
+                className="suggestion-chip-btn suggestion-chip-multiline"
                 onClick={() => handleChipClick(prompt)}
                 disabled={loading}
               >
-                {prompt}
+                <span className="suggestion-chip-num">{i + 1}.</span>
+                <span className="suggestion-chip-text">{prompt}</span>
               </button>
             ))}
           </div>
         </div>
       )}
+
 
       {/* Input Row */}
       <form onSubmit={handleSubmit} className="search-input-form-row">
@@ -116,7 +120,7 @@ export default function SearchCard({ onSend, loading, currentGoal, isWorking }) 
           <input
             type="text"
             className="search-main-input"
-            placeholder="e.g. Find ANC earbuds under ₹3000 with long battery life..."
+            placeholder="e.g. Find the best product for my needs and budget..."
             value={inputVal}
             onChange={(e) => setInputVal(e.target.value)}
             disabled={loading}

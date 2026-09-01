@@ -1,5 +1,5 @@
 #!/bin/bash
-# BudBuy — one-shot startup script
+# Shop.ai — one-shot startup script
 # Run this from the project root: bash scripts/start.sh
 
 set -e
@@ -7,7 +7,7 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
-echo "🎧 BudBuy Startup"
+echo "Shop.ai Startup"
 echo "=================================="
 
 # ── 1. Python venv ────────────────────────────────────────────────
@@ -21,12 +21,7 @@ source venv/bin/activate
 pip install -r requirements.txt -q
 
 # ── 2. Database ───────────────────────────────────────────────────
-if [ ! -f "budbuy.db" ]; then
-  echo "→ Seeding database (150 products, 4 merchants)..."
-  python3 scripts/seed_database.py
-else
-  echo "→ Database already exists, skipping seed."
-fi
+# SQLite tables are created by the application on startup.
 
 # ── 3. Frontend deps ──────────────────────────────────────────────
 echo "→ Installing frontend dependencies..."

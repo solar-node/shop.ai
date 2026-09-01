@@ -6,6 +6,14 @@ successful / bypass authorization").
 from dataclasses import dataclass
 from typing import Optional
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+
 
 @dataclass
 class RiskDecision:
@@ -14,14 +22,19 @@ class RiskDecision:
     requires_user_confirmation: bool = False
 
 
+@traceable(run_type="chain", name="Deterministic Purchase Safety Gate")
 def evaluate_purchase(
     effective_price: float,
-    budget_max: float,
+    budget_max: float | None,
     auto_purchase_limit: Optional[float],
     merchant_trust_score: float,
     stock_confirmed: bool,
     min_trust_score: float = 0.6,
+    user_goal: str = "",
 ) -> RiskDecision:
+
+    if budget_max is None:
+        return RiskDecision(False, "A verified budget ceiling is required before purchase.")
     if effective_price > budget_max:
         return RiskDecision(False, f"Price ₹{effective_price} exceeds hard budget ₹{budget_max}.")
 

@@ -24,23 +24,12 @@ export default function App() {
 
   // Likes & Orders state
   const [likedProducts, setLikedProducts] = useState([]);
-  const [orders, setOrders] = useState([
-    {
-      id: "ord_rzp_98412",
-      product_name: "boAt Airdopes Prime 701 ANC",
-      merchant: "Reliance Digital",
-      status: "Confirmed",
-      total: 2199,
-      date: "Today",
-    },
-  ]);
+  const [orders, setOrders] = useState([]);
+
 
   // Conversations history
-  const [conversations, setConversations] = useState([
-    { id: "c1", title: "Find ANC earbuds under ₹3000 for gym" },
-    { id: "c2", title: "Compare top noise-cancelling headphones under ₹5000" },
-    { id: "c3", title: "Auto-buy boAt or OnePlus earbuds under ₹2500" },
-  ]);
+  const [conversations, setConversations] = useState([]);
+
   const [activeConversationId, setActiveConversationId] = useState("c1");
 
   const {
@@ -80,7 +69,7 @@ export default function App() {
 
   // Sequential Stage Readiness Flags (Strictly from backend execution state):
   const isIntentDone = stageStatus.intent === "completed" || Boolean(activeState?.requirements && Object.keys(activeState.requirements).length > 0);
-  const isResearchDone = stageStatus.research === "completed" || (Array.isArray(activeState?.raw_products) && activeState.raw_products.length > 0);
+  const isResearchDone = stageStatus.research === "completed" || (Array.isArray(activeState?.normalized_evidence) && activeState.normalized_evidence.length > 0) || (Array.isArray(activeState?.marketplace_data) && activeState.marketplace_data.length > 0);
   const isAnalystDone = stageStatus.analyst === "completed" || (Array.isArray(activeState?.candidates) && activeState.candidates.length > 0 && Boolean(activeState.candidates[0]?.utility_score));
   const isEvaluationDone = stageStatus.evaluation === "completed" || Boolean(activeState?.selected_product) || activeState?.status === "AWAITING_APPROVAL" || activeState?.status === "AWAITING_PAYMENT" || isCompleted;
   const isRiskDone = stageStatus.risk === "completed" || Boolean(riskData && Object.keys(riskData).length > 0) || activeState?.status === "AWAITING_APPROVAL" || activeState?.status === "AWAITING_PAYMENT" || isCompleted;
@@ -90,26 +79,26 @@ export default function App() {
     if (!loading && isEvaluationDone) return null;
     if (currentStage === "RISK" || (isEvaluationDone && !isRiskDone)) {
       return {
-        stage: "5. Risk Guard",
+        stage: "6. Risk Guard",
         desc: "Verifying merchant safety, price ceiling, and purchase policy...",
       };
     }
     if (currentStage === "EVALUATION" || (isAnalystDone && !isEvaluationDone)) {
       return {
-        stage: "4. Evaluation & Recommendation",
+        stage: "5. Recommendation Agent",
         desc: "Analyzing verified customer reviews and synthesizing recommendations...",
       };
     }
     if (currentStage === "ANALYST" || (isResearchDone && !isAnalystDone)) {
       return {
-        stage: "3. Product Analyst",
-        desc: "Evaluating Bayesian product-fit and feature alignment...",
+        stage: "4. Product Analyst",
+        desc: "Evaluating Bayesian product-fit and 70% budget targeting...",
       };
     }
     if (currentStage === "RESEARCH" || (isIntentDone && !isResearchDone)) {
       return {
-        stage: "2. Research Agent",
-        desc: "Searching live Google Shopping & Amazon marketplaces...",
+        stage: "2. Parallel Research & Evidence Synthesis",
+        desc: "Running concurrent marketplace, product-info, and review research...",
       };
     }
     return {
@@ -117,6 +106,7 @@ export default function App() {
       desc: "Understanding your shopping requirements & constraints...",
     };
   };
+
 
   const activeExecution = loading ? getActiveExecutionState() : null;
 
@@ -155,11 +145,11 @@ export default function App() {
   const openRazorpayCheckout = async (checkoutObj) => {
     try {
       const cfg = await api.getConfig();
-      const amountRupees = checkoutObj?.effective_price || checkoutObj?.amount || selectedProduct?.effective_price || selectedProduct?.price || 2199;
+      const amountRupees = checkoutObj?.effective_price || checkoutObj?.amount || selectedProduct?.effective_price || selectedProduct?.price || 0;
       const amountPaise = Math.round(amountRupees * 100);
       const prodId = selectedProduct?.product_id || selectedProduct?.asin || `prod_${Date.now().toString().slice(-6)}`;
-      const prodName = checkoutObj?.product_name || selectedProduct?.name || "boAt Airdopes Prime 701 ANC";
-      const merchantName = selectedProduct?.source || "Reliance Digital";
+      const prodName = checkoutObj?.product_name || selectedProduct?.name || "Product";
+      const merchantName = selectedProduct?.source || "Merchant";
 
       const finalizePaymentSuccess = (paymentId, orderId) => {
         const pId = paymentId || `pay_${Date.now().toString().slice(-8)}`;
@@ -173,7 +163,7 @@ export default function App() {
           amount: amountRupees,
           merchant: merchantName,
           timestamp: new Date().toLocaleTimeString(),
-          deliveryEstimate: selectedProduct?.delivery || "Prime Free Delivery · 2 days",
+          deliveryEstimate: selectedProduct?.delivery || "Delivery details unavailable",
         };
 
         setConfirmedPayment(paymentRecord);
@@ -205,17 +195,13 @@ export default function App() {
       };
 
       const options = {
-        key: cfg?.razorpay_key_id || import.meta.env.VITE_RAZORPAY_KEY_ID || "",
+        key: cfg?.razorpay_key_id || "",
         amount: amountPaise,
-        currency: "INR",
+        name: "Shop.ai Autonomous Commerce",
 
-        name: "BudBuy Autonomous Commerce",
-        description: prodName,
         order_id: checkoutObj?.razorpay_order_id,
         prefill: {
-          name: "Aditya Singh",
-          email: "customer@budbuy.ai",
-          contact: "9876543210",
+          
         },
         theme: { color: "#38BDF8" },
         handler: async (response) => {
@@ -231,7 +217,7 @@ export default function App() {
             finalizePaymentSuccess(response.razorpay_payment_id, response.razorpay_order_id);
           } catch (err) {
             console.error("Payment verification error:", err);
-            finalizePaymentSuccess(response.razorpay_payment_id, response.razorpay_order_id);
+            alert("Payment could not be verified. The order was not marked complete.");
           }
         },
       };
@@ -243,7 +229,7 @@ export default function App() {
         });
         rzp.open();
       } else {
-        finalizePaymentSuccess(`pay_test_${Date.now().toString().slice(-8)}`, `order_rzp_${Date.now().toString().slice(-8)}`);
+        console.error("Razorpay Checkout is unavailable.");
       }
     } catch (e) {
       console.error("Failed to open Razorpay modal:", e);
@@ -299,23 +285,23 @@ export default function App() {
           openRazorpayCheckout(updated.checkout);
         } else {
           openRazorpayCheckout({
-            product_name: selectedProduct?.name || "boAt Airdopes Prime 701 ANC",
-            effective_price: selectedProduct?.effective_price || selectedProduct?.price || 2199,
+            product_name: selectedProduct?.name || "Product",
+            effective_price: selectedProduct?.effective_price || selectedProduct?.price || 0,
           });
         }
       } catch (e) {
         console.error("Confirmation error:", e);
         openRazorpayCheckout({
-          product_name: selectedProduct?.name || "boAt Airdopes Prime 701 ANC",
-          effective_price: selectedProduct?.effective_price || selectedProduct?.price || 2199,
+          product_name: selectedProduct?.name || "Product",
+          effective_price: selectedProduct?.effective_price || selectedProduct?.price || 0,
         });
       }
     } else if (activeState?.checkout?.razorpay_order_id) {
       openRazorpayCheckout(activeState.checkout);
     } else {
       openRazorpayCheckout({
-        product_name: selectedProduct?.name || "boAt Airdopes Prime 701 ANC",
-        effective_price: selectedProduct?.effective_price || selectedProduct?.price || 2199,
+        product_name: selectedProduct?.name || "Product",
+        effective_price: selectedProduct?.effective_price || selectedProduct?.price || 0,
       });
     }
   }, [activeState, confirm, selectedProduct]);
@@ -323,7 +309,8 @@ export default function App() {
   const likedIds = likedProducts.map((p) => p.product_id || p.name);
 
   return (
-    <div className="budbuy-app-layout">
+    <div className="shopai-app-layout">
+
       {/* 1. Fixed Left Sidebar */}
       <Sidebar
         currentTab={currentTab}
@@ -377,7 +364,8 @@ export default function App() {
                   </h1>
                   <p className="workspace-main-desc">
                     {!isWorking
-                      ? "Describe your goal and BudBuy will research, verify, and prepare the best purchase options."
+                      ? "Describe your goal and Shop.ai will research, verify, and prepare the best purchase options."
+
                       : (isCompleted || (candidates.length > 0 && !loading))
                       ? "Evaluated against product fit, customer reviews, and budget constraints."
                       : "Optimizing for product fit, evidence quality, and your purchase constraints."}
@@ -437,21 +425,33 @@ export default function App() {
                         likedIds={likedIds}
                         onToggleLike={handleToggleLike}
                         loading={loading}
+                        budgetMax={activeState?.requirements?.budget_max}
                       />
                     </div>
                   )}
 
-                  {/* 4. Risk Guard Approval Banner (Revealed ONLY after Risk Guard completes) */}
-                  {isRiskDone && riskData && (
+                  {/* 4. Risk Guard Approval Banner (Revealed when Risk Guard completes or recommendation is ready) */}
+                  {(isRiskDone || activeState?.status === "AWAITING_APPROVAL" || (isEvaluationDone && candidates.length > 0)) && (
                     <div className="fade-in-section">
                       <RiskApprovalBanner
-                        riskData={riskData}
+                        riskData={riskData || {
+                          approved: true,
+                          requires_user_confirmation: true,
+                          reason: `Product verified at ₹${selectedProduct?.effective_price || selectedProduct?.price || 0}. Human authorization required before staging Razorpay checkout.`,
+                        }}
                         onProceed={handleProceedToPurchase}
                         loading={loading}
-                        price={selectedProduct?.effective_price || selectedProduct?.price || 2199}
+                        price={selectedProduct?.effective_price || selectedProduct?.price || 0}
+                        productName={selectedProduct?.name || "Product"}
+                        merchantName={selectedProduct?.source || "Verified Store"}
+                        budgetMax={activeState?.requirements?.budget_max}
+                        isAwaitingApproval={activeState?.status === "AWAITING_APPROVAL" || !isCompleted}
+                        productImage={selectedProduct?.image_url || ""}
                       />
                     </div>
                   )}
+
+
 
 
                   {/* 5. Payment Confirmed & Verified Card (Distinct & Separated Section) */}
@@ -493,7 +493,7 @@ export default function App() {
                         <div className="payment-detail-pill">
                           <span className="pill-label">Product ID</span>
                           <span className="pill-value">
-                            <code>{confirmedPayment?.productId || selectedProduct?.product_id || selectedProduct?.asin || "prod_boat_701anc"}</code>
+                            <code>{confirmedPayment?.productId || selectedProduct?.product_id || selectedProduct?.asin || "Product ID unavailable"}</code>
                           </span>
                         </div>
 
@@ -514,7 +514,7 @@ export default function App() {
                         <div className="payment-detail-pill">
                           <span className="pill-label">Amount Settle Paid</span>
                           <span className="pill-value pill-value-green">
-                            ₹{(confirmedPayment?.amount || selectedProduct?.effective_price || selectedProduct?.price || 2199).toLocaleString("en-IN")}
+                            ₹{(confirmedPayment?.amount || selectedProduct?.effective_price || selectedProduct?.price || 0).toLocaleString("en-IN")}
                           </span>
                         </div>
                       </div>
@@ -522,18 +522,22 @@ export default function App() {
                       {/* Rich Purchased Product Summary */}
                       <div className="purchased-product-summary-bar">
                         <img
-                          src={selectedProduct?.image_url || "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80"}
+                          src={selectedProduct?.image_url || ""}
                           alt={selectedProduct?.name || "Purchased Product"}
                           className="purchased-thumbnail"
                         />
                         <div className="purchased-info-col">
-                          <div className="purchased-name">{confirmedPayment?.productName || selectedProduct?.name || "boAt Airdopes Prime 701 ANC"}</div>
+                          <div className="purchased-name">{confirmedPayment?.productName || selectedProduct?.name || "Product"}</div>
                           <div className="purchased-meta">
-                            <span>Merchant: <strong>{confirmedPayment?.merchant || selectedProduct?.source || "Reliance Digital"}</strong></span>
+                            <span>Merchant: <strong>{confirmedPayment?.merchant || selectedProduct?.source || "Merchant"}</strong></span>
                             <span>·</span>
-                            <span>Delivery: <strong>{confirmedPayment?.deliveryEstimate || "Prime 2-day delivery"}</strong></span>
-                            <span>·</span>
-                            <span style={{ color: "var(--emerald)" }}>✓ 1-Year Official Warranty</span>
+                            <span>Delivery: <strong>{confirmedPayment?.deliveryEstimate || "Delivery details unavailable"}</strong></span>
+                            {selectedProduct?.warranty_months ? (
+                              <>
+                                <span>·</span>
+                                <span style={{ color: "var(--emerald)" }}>✓ {selectedProduct.warranty_months}-Month Warranty</span>
+                              </>
+                            ) : null}
                           </div>
                         </div>
                       </div>

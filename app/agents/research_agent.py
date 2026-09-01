@@ -1,233 +1,151 @@
-"""Intent extraction and live product research."""
-
+"""Intent planning and marketplace discovery for Shop.ai."""
 import re
-
 from app.agents.llm_client import call_structured
 from app.mcp.client import merchant_client
-from app.commerce.ranking import rank_products, weights_from_priority
 
 
-INTENT_SYSTEM_PROMPT = """You are the BudBuy Intent Agent.
-Convert the user's shopping request into JSON with:
-category, budget_max, soft_preferences, required_features, use_case,
-priority, auto_purchase_limit, brand_preference.
-Use only stated or clearly implied requirements. auto_purchase_limit must be
-null unless the user explicitly asks for automatic purchase with a price limit.
-Convert budgets to INR."""
+INTENT_SYSTEM_PROMPT = """You are Shop.ai's Shopping Planner.
+
+Turn a user's natural-language shopping goal into a compact, category-agnostic plan.
+Do not use a fixed category list. Infer the product category from the request.
+Do not invent requirements that are not stated or strongly implied by the use case.
+Separate non-negotiable constraints from preferences.
+
+Return ONLY JSON:
+{
+  "category": "...",
+  "budget_max": number|null,
+  "use_case": "...",
+  "hard_constraints": ["..."],
+  "soft_preferences": ["..."],
+  "priority_order": ["..."],
+  "brand_preference": "...",
+  "auto_purchase_limit": number|null,
+  "purchase_intent": "recommend"|"auto_buy"
+}
+
+Examples:
+User: Find ANC earbuds under 3000 for gym
+Output: {"category":"earbuds","budget_max":3000,"use_case":"gym","hard_constraints":["price <= 3000","ANC"],"soft_preferences":["secure fit","sweat resistance","bass"],"priority_order":["ANC","secure fit","bass","price"],"brand_preference":"","auto_purchase_limit":null,"purchase_intent":"recommend"}
+
+User: I need a laptop under 70000 for Python and ML
+Output: {"category":"laptop","budget_max":70000,"use_case":"Python development and machine learning","hard_constraints":["price <= 70000"],"soft_preferences":["strong CPU","16GB RAM","GPU","SSD"],"priority_order":["compute performance","GPU","RAM","price"],"brand_preference":"","auto_purchase_limit":null,"purchase_intent":"recommend"}
+
+User: Buy a camera automatically if it is below 50000 and good for travel
+Output: {"category":"camera","budget_max":null,"use_case":"travel photography","hard_constraints":[],"soft_preferences":["travel-friendly","good image quality"],"priority_order":["image quality","portability","price"],"brand_preference":"","auto_purchase_limit":50000,"purchase_intent":"auto_buy"}
+
+Reason from the actual request; do not copy example values into unrelated queries."""
 
 
-def _extract_intent_heuristic(text: str) -> dict:
+def _heuristic_fallback(text: str) -> dict:
+    """Minimal outage fallback: extract only information that can be safely inferred generically."""
     t = text.lower()
-    
-    # 1. Budget extraction
-    budget_max = 3000.0
-    budget_match = re.search(r'(?:under|below|budget|max|upto|within|<=|<)?\s*(?:₹|rs\.?|inr)?\s*(\d{3,6})', t)
-    numbers = [int(n.replace(",", "")) for n in re.findall(r'\b(\d{3,6})\b', t)]
-    if budget_match and int(budget_match.group(1)) > 300:
-        budget_max = float(budget_match.group(1))
-    elif numbers:
-        budget_max = float(max(numbers))
+    # First search for explicit budget phrases (e.g. under ₹70,000, below 4000)
+    budget_match = re.search(r"(?:under|below|within|budget(?:\s+of)?|max(?:\s+of)?|<=?)\s*(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})", t)
+    if budget_match:
+        budget = int(budget_match.group(1).replace(",", ""))
+    else:
+        raw_nums = re.findall(r"(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})", t)
+        nums = [int(x.replace(",", "")) for x in raw_nums if int(x.replace(",", "")) >= 100]
+        budget = max(nums) if nums else None
 
-    # 2. Auto-purchase limit
-    auto_limit = None
-    if any(k in t for k in ["auto-buy", "autobuy", "auto-pay", "autopay", "auto buy", "auto pay"]):
-        auto_match = re.search(r'(?:auto(?:-| )?(?:buy|pay)(?: under| if under| below| <=)?)\s*(?:₹|rs\.?|inr|\b)\s*(\d{3,6})', t)
-        if auto_match:
-            auto_limit = float(auto_match.group(1))
-        else:
-            auto_limit = budget_max
+    auto = None
+    if any(x in t for x in ("auto-buy", "autobuy", "auto buy", "auto-pay", "autopay", "automatically")):
+        auto = budget
 
-    # 3. Category extraction
-    category = "earbuds"
-    if any(w in t for w in ["headphone", "headphones", "over-ear", "on-ear"]):
-        category = "headphones"
-    elif any(w in t for w in ["speaker", "speakers", "soundbar"]):
-        category = "speaker"
-    elif "iem" in t:
-        category = "iem"
-    elif any(w in t for w in ["earbuds", "tws", "earphone", "earphones", "buds"]):
-        category = "earbuds"
+    category_match = re.search(
+        r"(?:find|buy|want|need|looking for|best)\s+(?:an?\s+|the\s+)?(.+?)(?:\s+(?:under|below|within|for|with)\b|$)",
+        t,
+    )
+    category = "product"
+    if category_match:
+        words = re.sub(r"[^a-z0-9 -]", " ", category_match.group(1)).split()
+        category = " ".join(words[-3:]) or category
 
-    # 4. Brand detection
-    brands = []
-    for b in ["sony", "boat", "oneplus", "noise", "realme", "jbl", "apple", "sennheiser", "bose", "boult", "zebronics", "xiaomi", "soundcore", "anker"]:
-        if b in t:
-            brands.append(b.capitalize() if b != "boat" else "boAt")
-    brand_pref = " ".join(brands)
-
-    # 5. Soft preferences
     prefs = []
-    if "anc" in t or "noise" in t:
-        prefs.append("ANC")
-    if "gym" in t or "sport" in t or "workout" in t:
-        prefs.append("gym")
-    if "bass" in t:
-        prefs.append("heavy bass")
-    if "battery" in t:
-        prefs.append("battery life")
+    for phrase in re.findall(r"(?:with|for)\s+([^,]+)", t):
+        cleaned = phrase.strip()
+        if cleaned and len(cleaned) < 60:
+            prefs.append(cleaned)
 
     return {
         "category": category,
-        "budget_max": budget_max,
+        "budget_max": float(budget) if budget else None,
+        "use_case": "general use",
+        "hard_constraints": [f"price <= {budget}"] if budget else [],
         "soft_preferences": prefs,
-        "required_features": [],
-        "use_case": "general",
-        "priority": "budget and quality match",
-        "auto_purchase_limit": auto_limit,
-        "brand_preference": brand_pref,
+        "priority_order": prefs + (["price"] if budget else []),
+        "brand_preference": "",
+        "auto_purchase_limit": float(auto) if auto else None,
+        "purchase_intent": "auto_buy" if auto else "recommend",
     }
+
 
 
 def extract_intent(user_goal: str) -> dict:
-    """Turn a natural-language request into structured requirements."""
     data = call_structured(INTENT_SYSTEM_PROMPT, user_goal)
-    if not data or not data.get("budget_max"):
-        data = _extract_intent_heuristic(user_goal)
-    defaults = {
-        "category": "earbuds", "budget_max": 3000.0, "soft_preferences": [],
-        "required_features": [], "use_case": "general", "priority": "overall quality",
-        "auto_purchase_limit": None, "brand_preference": "",
-    }
-    for key, value in defaults.items():
-        data.setdefault(key, value)
-    return data
-
+    return data if data and data.get("category") else _heuristic_fallback(user_goal)
 
 
 def extract_requirements(user_goal: str) -> dict:
-    """Backward-compatible name used by older callers."""
     return extract_intent(user_goal)
 
 
-FALLBACK_IMAGES = {
-    "sony": "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80",
-    "boat": "https://images.unsplash.com/photo-1606220588913-b3aacb4d2f46?w=500&q=80",
-    "basspro": "https://images.unsplash.com/photo-1572536147248-ac59a8abfa4b?w=500&q=80",
-    "soundmax": "https://images.unsplash.com/photo-1546435770-a3e426bf472b?w=500&q=80",
-    "headphones": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80",
-    "earbuds": "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=500&q=80",
-    "speaker": "https://images.unsplash.com/photo-1545454675-3531b543be5d?w=500&q=80",
-    "iem": "https://images.unsplash.com/photo-1583394838336-acd977736f90?w=500&q=80",
-    "default": "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&q=80",
-}
+def build_search_query(requirements: dict, user_goal: str = "") -> str:
+    category = requirements.get("category") or "product"
+    budget = requirements.get("budget_max")
+    brand = requirements.get("brand_preference") or ""
+    prefs = [str(x) for x in requirements.get("soft_preferences", [])[:3] if len(str(x)) < 25 and not any(w in str(x).lower() for w in ("under", "price", "budget"))]
 
+    if user_goal and len(user_goal.strip()) <= 45:
+        return user_goal.strip()
 
-def _resolve_image_url(image_url: str, name: str, category: str) -> str:
-    if image_url and image_url.startswith("http"):
-        return image_url
-    name = (name or "").lower()
-    for key, url in FALLBACK_IMAGES.items():
-        if key in name:
-            return url
-    return FALLBACK_IMAGES.get((category or "").lower(), FALLBACK_IMAGES["default"])
-
-
-def _build_search_query(requirements: dict, user_goal: str = "") -> str:
-    if user_goal and len(user_goal.strip()) > 3:
-        return re.sub(
-            r"^(find|search|compare|show|get|buy|look for|i want|please find)\s+",
-            "", user_goal.strip(), flags=re.IGNORECASE,
-        )
-
-    parts = [requirements.get("category", "earbuds")]
-    brand = requirements.get("brand_preference")
+    query_parts = []
     if brand:
-        parts.insert(0, brand)
+        query_parts.append(brand)
+    query_parts.append(category)
+    if prefs:
+        query_parts.append(" ".join(prefs[:2]))
+    if budget:
+        query_parts.append(f"under {int(budget)}")
 
-    prefs = requirements.get("soft_preferences", [])
-    if any(p.lower() == "anc" for p in prefs):
-        parts.append("ANC")
-    if any("wireless" in p.lower() or "bluetooth" in p.lower() for p in prefs):
-        parts.append("wireless")
-    return " ".join(parts)
+    return " ".join(query_parts).strip()
+
+
+
+def find_candidates(requirements: dict, user_goal: str = "", exclude_ids=None) -> list:
+    """Retrieve raw marketplace evidence. Ranking deliberately happens later."""
+    exclude_ids = set(exclude_ids or [])
+    query = build_search_query(requirements, user_goal)
+    candidates = []
+    try:
+        from app.integrations.product_scraper import scrape_live_products
+        candidates = scrape_live_products(
+            query=query,
+            max_price=float(requirements.get("budget_max") or 0),
+            max_results=10,
+        ) or []
+    except Exception as exc:
+        print(f"[Research] Live marketplace search failed: {exc}")
+
+    if not candidates:
+        candidates = _search_local_catalog(requirements)
+
+    return [p for p in candidates if p.get("product_id") not in exclude_ids]
 
 
 def find_and_rank_candidates(requirements: dict, exclude_ids=None, user_goal: str = "") -> list:
-    """Search live products first, then the local MCP catalog, and rank them."""
-    exclude_ids = exclude_ids or []
-    candidates = []
-
-    try:
-        from app.integrations.product_scraper import scrape_live_products
-        products = scrape_live_products(
-            query=_build_search_query(requirements, user_goal),
-            max_price=requirements.get("budget_max", 0) or 0,
-            max_results=6,
-        )
-        for product in products:
-            if product["product_id"] in exclude_ids:
-                continue
-            if not product.get("image_url", "").startswith("http"):
-                product["image_url"] = _resolve_image_url(
-                    "", product.get("name", ""), requirements.get("category", "")
-                )
-            candidates.append(product)
-    except Exception as error:
-        print(f"[Research] Live search failed: {error}")
-
-    if not candidates:
-        candidates = _search_local_catalog(requirements, exclude_ids)
-
-    ranked = rank_products(
-        candidates,
-        budget_max=requirements.get("budget_max", 0) or 999999,
-        soft_preferences=requirements.get("soft_preferences", []),
-        weights=weights_from_priority(requirements.get("priority", "")),
-    )
-
-    lookup = {p["product_id"]: p for p in candidates}
-    results = []
-    for item in ranked:
-        original = lookup.get(item.product_id, {})
-        data = item.__dict__.copy()
-        data.update({
-            "image_url": original.get("image_url") or _resolve_image_url(
-                "", item.name, requirements.get("category", "")
-            ),
-            "flipkart_url": original.get("flipkart_url", ""),
-            "source": original.get("source", "Live Marketplace"),
-            "specs": original.get("specs", {}),
-            "rating": original.get("rating", 4.3),
-            "review_count": original.get("review_count", 1500),
-            "old_price": original.get("old_price"),
-            "discount_pct": original.get("discount_pct"),
-            "delivery": original.get("delivery", "Free Delivery"),
-            "badge": original.get("badge", "Top Match"),
-        })
-        results.append(data)
-    return results
+    """Backward-compatible name; discovery is no longer responsible for ranking."""
+    return find_candidates(requirements, user_goal, exclude_ids)
 
 
-def _search_local_catalog(requirements: dict, exclude_ids: list) -> list:
-    brand = requirements.get("brand_preference")
-    brand_str = " ".join(brand) if isinstance(brand, list) else str(brand or "")
-    category = requirements.get("category", "earbuds")
-    category_str = " ".join(category) if isinstance(category, list) else str(category or "earbuds")
-
+def _search_local_catalog(requirements: dict) -> list:
+    """Use the merchant catalog without manufacturing category-specific products."""
     products = merchant_client.call(
         "search_products",
-        category=category_str,
-        brand=brand_str,
-        max_price=requirements.get("budget_max", 0) or 0,
+        category=str(requirements.get("category", "")),
+        brand=str(requirements.get("brand_preference", "")),
+        max_price=float(requirements.get("budget_max") or 0),
+        query_text=" ".join(str(x) for x in requirements.get("soft_preferences", [])),
     )
-    candidates = []
-    if isinstance(products, list):
-        for product in products:
-            if not isinstance(product, dict) or product.get("product_id") in exclude_ids:
-                continue
-            stock = merchant_client.call("check_stock", product_id=product["product_id"])
-            stock_qty = stock.get("available_qty", 10) if isinstance(stock, dict) else 10
-            candidates.append({
-                "product_id": product["product_id"],
-                "name": product["name"],
-                "price": product["price"],
-                "image_url": _resolve_image_url(
-                    product.get("image_url", ""), product["name"], category_str
-                ),
-                "rating": product.get("rating", 4.0),
-                "review_count": product.get("review_count", 1000),
-                "specs": product.get("specs", {}),
-                "source": "local",
-                "available_qty": stock_qty,
-            })
-    return candidates
+    return products if isinstance(products, list) else []

@@ -1,7 +1,8 @@
 """
-BudBuy database models.
+Shop.ai database models.
 SQLite for prototype (per spec section 34/40) - swap DATABASE_URL for Postgres later, same models work.
 """
+
 from datetime import datetime, timedelta
 import uuid
 from sqlalchemy import (
@@ -21,7 +22,7 @@ class Merchant(Base):
     __tablename__ = "merchants"
     id = Column(String, primary_key=True, default=lambda: gen_id("mer"))
     name = Column(String, nullable=False)
-    trust_score = Column(Float, default=0.9)  # 0-1, used by Risk Agent
+    trust_score = Column(Float, nullable=True)  # 0-1, used by Risk Agent
     negotiation_supported = Column(Boolean, default=False)
     negotiation_floor_pct = Column(Float, default=0.10)  # max % off merchant will go to
     return_policy_days = Column(Integer, default=7)
@@ -34,13 +35,13 @@ class Product(Base):
     merchant_id = Column(String, ForeignKey("merchants.id"))
     name = Column(String, nullable=False)
     brand = Column(String)
-    category = Column(String, default="earbuds")  # earbuds, headphones, iem, speaker, dac, mic
+    category = Column(String, nullable=True)
     price = Column(Float, nullable=False)
     description = Column(Text)
     specs = Column(JSON)  # {battery_hours, anc, water_resistance, driver_size, ...}
-    rating = Column(Float, default=4.0)
+    rating = Column(Float, nullable=True)
     review_count = Column(Integer, default=0)
-    warranty_months = Column(Integer, default=12)
+    warranty_months = Column(Integer, nullable=True)
 
     merchant = relationship("Merchant", back_populates="products")
     inventory = relationship("Inventory", back_populates="product", uselist=False)

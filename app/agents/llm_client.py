@@ -7,6 +7,14 @@ load_dotenv()
 from google import genai
 from google.genai import types
 
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
+
 _client = None
 MODEL = "gemini-2.5-flash"
 
@@ -21,8 +29,9 @@ def _get_client():
     return _client
 
 
-
+@traceable(run_type="llm", name="Gemini (gemini-2.5-flash: structured)")
 def call_structured(system_prompt: str, user_message: str, max_tokens: int = 1000) -> dict:
+
     """Ask Gemini for JSON."""
     try:
         response = _get_client().models.generate_content(
@@ -40,8 +49,10 @@ def call_structured(system_prompt: str, user_message: str, max_tokens: int = 100
         return {}
 
 
+@traceable(run_type="llm", name="Gemini (gemini-2.5-flash: text)")
 def call_llm(prompt: str) -> str:
     """Ask Gemini for normal text."""
+
     try:
         response = _get_client().models.generate_content(
             model=MODEL,

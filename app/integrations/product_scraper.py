@@ -1,34 +1,35 @@
 """
 Live E-Commerce Scraper & Product Search Engine.
-Supports:
-1. SerpAPI (https://serpapi.com) - Real Google Shopping India data with live prices, ratings, reviews, thumbnails
-2. ScraperAPI (https://www.scraperapi.com) - Amazon.in live scraper
-3. Currency normalization ($ -> ₹) to prevent budget truncation
+Supports live marketplace retrieval through configured SerpAPI and optional ScraperAPI.
 """
 import os
 import re
 import urllib.parse
 import requests
 
-SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY", "")
-SERPAPI_KEY    = os.environ.get("SERPAPI_KEY", "")
+try:
+    from langsmith import traceable
+except ImportError:
+    def traceable(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
 
 
+@traceable(run_type="tool", name="Marketplace Search (SerpAPI / Google Shopping)")
 def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6) -> list[dict]:
+
     """
     Search live e-commerce marketplaces for real products, prices, ratings, review counts, and images.
     """
     results = []
 
-    # Currency normalization: if budget is given in USD (e.g. $350), convert to INR (~₹29,750)
+    # Budget ceiling
     effective_max_price = max_price
-    if 0 < effective_max_price <= 1500:
-        effective_max_price = effective_max_price * 85.0
 
     # ── 1. SerpAPI (Google Shopping India) ───────────────────────────────────
-    serp_key = os.environ.get("SERPAPI_KEY", "") or SERPAPI_KEY
+    serp_key = os.environ.get("SERPAPI_KEY", "")
     if serp_key:
-
         try:
             clean_q = query.strip()
             # If query does not mention India, append India for regional pricing
@@ -42,14 +43,14 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                 "hl": "en",
                 "api_key": serp_key,
             }
-            resp = requests.get("https://serpapi.com/search.json", params=params, timeout=9)
+            resp = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
 
             if resp.status_code == 200:
                 raw_items = resp.json().get("shopping_results", [])
                 
                 for item in raw_items:
                     price = _clean_price(item.get("extracted_price") or item.get("price") or 0)
-                    if effective_max_price > 0 and price > (effective_max_price * 1.2):
+                    if effective_max_price > 0 and price > effective_max_price:
                         continue
                     if price <= 0:
                         continue
@@ -59,7 +60,7 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
 
                     raw_reviews = item.get("reviews") or item.get("review_count") or 0
                     reviews_count = _clean_review_count(raw_reviews)
-                    rating = float(item.get("rating") or 4.4)
+                    rating = float(item.get("rating") or 0)
 
                     # Check for lowest seller across all buying options in the item
                     source_name = item.get("source") or item.get("merchant") or "Google Shopping"
@@ -72,7 +73,7 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                             if s_name:
                                 source_name = s_name
 
-                    delivery_info = item.get("delivery") or ("Free Prime Delivery" if "amazon" in source_name.lower() else "Free Delivery · 2-3 days")
+                    delivery_info = item.get("delivery") or ""
                     badge = item.get("badge") or ""
                     
                     img = item.get("thumbnail") or item.get("thumbnail_url") or ""
@@ -81,17 +82,17 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                         "product_id":   f"serp_{abs(hash(title)) % 1000000}",
                         "name":         title,
                         "price":        price,
-                        "old_price":    old_price if (old_price and old_price > price) else round(price * 1.35),
-                        "discount_pct": discount_pct if discount_pct > 0 else 25,
+                        "old_price":    old_price if (old_price and old_price > price) else None,
+                        "discount_pct": discount_pct if discount_pct > 0 else None,
                         "image_url":    img,
                         "rating":       rating,
                         "review_count": reviews_count,
                         "flipkart_url": item.get("link") or item.get("product_link", ""),
                         "source":       source_name,
                         "delivery":     delivery_info,
-                        "badge":        badge or ("Top Match" if reviews_count > 1000 else "Popular Choice"),
-                        "specs":        _extract_specs(title),
-                        "available_qty":10,
+                        "badge":        badge,
+                        "specs":        {},
+                        "available_qty": None,
                     })
 
                 if results:
@@ -107,22 +108,24 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                                 deduped[norm_key] = item
 
                     final_list = list(deduped.values())
-                    # Sort to prioritize products that best utilize the user's budget ceiling with strong ratings
-                    def _rank_key(x):
-                        price_ratio = min((x["price"] / effective_max_price), 1.0) if effective_max_price > 0 else 0.8
-                        # Reward items in 70%-100% price tier (closer to given price)
-                        price_score = price_ratio if price_ratio >= 0.70 else (price_ratio * 0.5)
-                        rating_score = float(x.get("rating", 4.0)) / 5.0
-                        return (price_score * 0.65 + rating_score * 0.35)
 
-                    final_list.sort(key=_rank_key, reverse=True)
+                    # Prioritize items in the target budget zone (>= 70% and >= 85% of budget)
+                    if effective_max_price > 0:
+                        def _budget_priority_key(x):
+                            p = float(x.get("price") or 0)
+                            ratio = p / effective_max_price
+                            # Score higher if in the 70%-100% or 85%-100% zone
+                            zone_score = 3 if ratio >= 0.85 else (2 if ratio >= 0.70 else (1 if ratio >= 0.40 else 0))
+                            return (zone_score, p, int(x.get("review_count") or 0))
+                        final_list.sort(key=_budget_priority_key, reverse=True)
+
                     return final_list[:max_results]
         except Exception as e:
-
             print(f"[Scraper] SerpAPI error: {e}")
 
+
     # ── 2. Fallback ScraperAPI (Amazon.in) ───────────────────────────────────
-    scraper_key = os.environ.get("SCRAPERAPI_KEY", "") or SCRAPERAPI_KEY
+    scraper_key = os.environ.get("SCRAPERAPI_KEY", "")
     if scraper_key:
         try:
             target_url = f"https://www.amazon.in/s?k={urllib.parse.quote(query)}"
@@ -142,24 +145,24 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                     if price <= 0:
                         continue
                     title = item.get("name") or item.get("title", "")
-                    rating = float(item.get("stars", 4.3))
-                    reviews_count = int(item.get("total_reviews", 850))
+                    rating = float(item.get("stars") or 0)
+                    reviews_count = _clean_review_count(item.get("total_reviews") or 0)
 
                     results.append({
                         "product_id":   f"amz_{item.get('asin', abs(hash(title)) % 1000000)}",
                         "name":         title,
                         "price":        price,
-                        "old_price":    round(price * 1.3),
-                        "discount_pct": 20,
+                        "old_price":    None,
+                        "discount_pct": None,
                         "image_url":    item.get("image", ""),
                         "rating":       rating,
                         "review_count": reviews_count,
                         "flipkart_url": item.get("url") or f"https://www.amazon.in/dp/{item.get('asin', '')}",
-                        "source":       "Amazon.in",
-                        "delivery":     "Prime Free Delivery · 2 days",
-                        "badge":        "Amazon's Choice",
-                        "specs":        _extract_specs(title),
-                        "available_qty":10,
+                        "source":       item.get("source") or "Amazon.in",
+                        "delivery":     item.get("delivery", ""),
+                        "badge":        item.get("badge", ""),
+                        "specs":        {},
+                        "available_qty": None,
                     })
                 if results:
                     return results[:max_results]
@@ -189,14 +192,6 @@ def _clean_review_count(val) -> int:
             return int(num * 1000)
         return int(float(s))
     except Exception:
-        return 1200
+        return 0
 
 
-def _extract_specs(title: str) -> dict:
-    t = title.lower()
-    return {
-        "anc":          "anc" in t or "noise cancell" in t or "active noise" in t or "noise reduction" in t,
-        "wireless":     "wireless" in t or "bluetooth" in t or "tws" in t or "true wireless" in t,
-        "gym_suitable": "gym" in t or "sport" in t or "waterproof" in t or "ipx" in t or "sweat" in t,
-        "battery_hours": 40 if "40" in t else (50 if "50" in t else (30 if "battery" in t else 28)),
-    }

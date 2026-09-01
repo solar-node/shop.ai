@@ -2,7 +2,7 @@ import React, { useState } from "react";
 
 const STAGE_CONFIG = {
   INTENT: {
-    name: "Intent",
+    name: "1. Intent Understanding",
     icon: (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <circle cx="12" cy="12" r="3" />
@@ -17,78 +17,96 @@ const STAGE_CONFIG = {
     },
   },
   RESEARCH: {
-    name: "Research",
+    name: "2. Parallel Research (Fan-Out)",
     icon: (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <circle cx="11" cy="11" r="8" />
         <line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
     ),
-    defaultSummary: "Queried live marketplace listings across Google Shopping & Amazon via SerpAPI.",
+    defaultSummary: "Queried live marketplace listings across Google Shopping & Amazon via SerpAPI concurrently with spec planning and review trust.",
     details: {
-      role: "Live Marketplace Catalog Agent (API)",
-      tools: ["serpapi_google_shopping", "mcp_catalog_scanner"],
-      method: "Real-time e-commerce catalog search & pricing extraction",
+      role: "Parallel Research Agents (Concurrent)",
+      tools: ["marketplace_research", "product_info_research", "review_trust_research"],
+      method: "Concurrent marketplace retrieval, dynamic category attributes, and Bayesian review modeling",
+    },
+  },
+  EVIDENCE: {
+    name: "3. Evidence Synthesis (Join)",
+    icon: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+        <line x1="12" y1="22.08" x2="12" y2="12" />
+      </svg>
+    ),
+    defaultSummary: "Normalized heterogeneous marketplace, attribute, and review confidence signals into a common schema.",
+    details: {
+      role: "Evidence Synthesis Agent (LLM Join)",
+      tools: ["evidence_fusion_engine", "schema_normalizer"],
+      method: "LLM normalization joining 3 parallel research streams without hallucination",
     },
   },
   ANALYST: {
-    name: "Product Fit",
+    name: "4. Product Analyst (Python)",
     icon: (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
       </svg>
     ),
-    defaultSummary: "Ranked candidates using multi-factor Bayesian utility math and budget fit.",
+    defaultSummary: "Ranked candidates using multi-factor Bayesian utility math, statistical review volume weighting, and 85% budget targeting.",
+
     details: {
-      role: "Product Analyst & Utility Ranker (Python)",
-      tools: ["bayesian_utility_ranker", "preference_weight_matrix"],
-      method: "Deterministic utility scoring over price, ratings, and feature weights",
+      role: "Product Analyst & Utility Ranker (Deterministic Python)",
+      tools: ["bayesian_utility_ranker", "budget_targeting_strategy", "feature_matching_engine"],
+      method: "Deterministic utility scoring over price, ratings, volume shrinkage, and requirement match",
     },
   },
   EVALUATION: {
-    name: "Review Evidence",
+    name: "5. Recommendation Agent (LLM)",
     icon: (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
       </svg>
     ),
-    defaultSummary: "Customer feedback analyzed for sentiment consistency, sound quality, and daily reliability.",
+    defaultSummary: "Synthesized grounded 'WHY THIS PRODUCT?' reasoning derived strictly from verified facts.",
     details: {
-      role: "Review Signal & Recommendation Agent (LLM)",
-      tools: ["gemini_review_analyzer", "evidence_confidence_scorer"],
-      method: "Review sentiment classification and evidence grounding",
+      role: "Recommendation & Reasoning Agent (LLM)",
+      tools: ["grounded_reason_synthesizer", "gemini_structured_caller"],
+      method: "Evidence-grounded reason synthesis without marketing buzzwords",
     },
   },
   RISK: {
-    name: "Risk Guard",
+    name: "6. Risk Guard (Safety Gate)",
     icon: (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       </svg>
     ),
-    defaultSummary: "Purchase approved within budget ceiling, in-stock inventory, and seller trust policy.",
+    defaultSummary: "Purchase evaluated against hard budget ceiling, stock availability, and merchant reputation policy.",
     details: {
-      role: "Deterministic Policy & Safety Gate",
-      tools: ["budget_ceiling_validator", "seller_reputation_guard"],
-      method: "Hard rule verification before transaction staging",
+      role: "Deterministic Policy & Safety Gate (Python)",
+      tools: ["budget_ceiling_validator", "stock_reservation_verifier", "merchant_trust_guard"],
+      method: "Hard deterministic rule verification before transaction staging",
     },
   },
   PURCHASE: {
-    name: "Purchase / Razorpay",
+    name: "7. Human Approval & Razorpay",
     icon: (
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
         <line x1="1" y1="10" x2="23" y2="10" />
       </svg>
     ),
-    defaultSummary: "Ready for user confirmation & Razorpay checkout execution.",
+    defaultSummary: "User confirmation required before Razorpay checkout execution and cryptographic HMAC verification.",
     details: {
-      role: "Payment Gateway Staging & Cart Reservation",
-      tools: ["razorpay_order_api", "hmac_sha256_verifier"],
-      method: "Cryptographic HMAC checkout staging and webhook authentication",
+      role: "Payment Gateway Staging & Cryptographic Settlement",
+      tools: ["razorpay_order_api", "hmac_sha256_verifier", "idempotency_store"],
+      method: "Cryptographic HMAC checkout staging, webhooks, and inventory lock release",
     },
   },
 };
+
 
 export default function DecisionLedgerCard({ events = [], sessionId, userGoal, activeState }) {
   const [expandedStage, setExpandedStage] = useState(null);
@@ -103,7 +121,7 @@ export default function DecisionLedgerCard({ events = [], sessionId, userGoal, a
       const intentEvt = events.find((e) => (e.agent || "").toUpperCase().includes("INTENT"));
       const reqs = intentEvt?.detail || activeState?.requirements;
       if (reqs?.budget_max) {
-        const cat = reqs.category || "earbuds";
+        const cat = reqs.category || "product";
         return `Extracted intent for ${cat} under ₹${Number(reqs.budget_max).toLocaleString("en-IN")}${reqs.brand_preference ? ` (${reqs.brand_preference})` : ""}.`;
       }
       return userGoal ? `Interpreted goal: "${userGoal}"` : STAGE_CONFIG.INTENT.defaultSummary;
@@ -111,45 +129,59 @@ export default function DecisionLedgerCard({ events = [], sessionId, userGoal, a
 
     if (stageKey === "RESEARCH") {
       const researchEvt = events.find((e) => (e.agent || "").toUpperCase().includes("RESEARCH") && e.detail?.count);
-      const count = researchEvt?.detail?.count || activeState?.raw_products?.length || (activeState?.candidates?.length ? activeState.candidates.length : 6);
-      return `${count} live marketplace listings found across Google Shopping & Amazon.`;
+      const count = researchEvt?.detail?.count || activeState?.marketplace_data?.length || activeState?.candidates?.length || 6;
+      return `${count} marketplace listings retrieved via SerpAPI / Google Shopping concurrently with product attribute planning and review confidence modeling.`;
+    }
+
+    if (stageKey === "EVIDENCE") {
+      const evidenceEvt = events.find((e) => (e.agent || "").toUpperCase().includes("EVIDENCE"));
+      const count = evidenceEvt?.detail?.count || activeState?.normalized_evidence?.length || activeState?.candidates?.length || 6;
+      return `Normalized ${count} candidate records across all 3 parallel streams into structured attributes and verified review signals.`;
     }
 
     if (stageKey === "ANALYST") {
       const topCand = activeState?.candidates?.[0];
       if (topCand) {
         const scorePct = Math.round((topCand.utility_score || 0.96) * 100);
-        return `Selected top match based on price, ANC capability, specifications, and ${scorePct}% product-fit score.`;
+        return `Selected the highest deterministic utility score (${scorePct}%) using high-volume Bayesian rating confidence and 85% budget targeting.`;
       }
       return STAGE_CONFIG.ANALYST.defaultSummary;
     }
 
+
     if (stageKey === "EVALUATION") {
       const topCand = activeState?.candidates?.[0] || activeState?.selected_product;
-      const sentiment = topCand?.sentiment_label || "Very positive feedback";
-      const insight = topCand?.ai_insight || "Customer feedback is strongly positive for sound quality and ANC.";
-      return `${sentiment}: "${insight}"`;
+      const reasons = topCand?.recommendation_reasons || [];
+      if (reasons.length > 0) {
+        return `Recommendation grounded in verified facts: ${reasons.slice(0, 2).join(" · ")}`;
+      }
+      const insight = topCand?.ai_insight || topCand?.review_evidence?.evidence_summary;
+      return insight ? `Recommendation: ${insight}` : STAGE_CONFIG.EVALUATION.defaultSummary;
     }
 
     if (stageKey === "RISK") {
       const risk = activeState?.risk;
       if (risk?.approved) {
-        return "Purchase approved within budget and merchant safety policy.";
+        return risk.reason || "Risk policy approved the selected product against budget, stock, and seller trust policies.";
       }
       return STAGE_CONFIG.RISK.defaultSummary;
     }
 
     if (stageKey === "PURCHASE") {
       if (activeState?.status === "COMPLETED") {
-        return "Payment completed & cryptographically verified via Razorpay.";
+        return "Payment completed & cryptographically authenticated with Razorpay HMAC-SHA256 signature.";
       }
-      return "Ready for user confirmation & Razorpay checkout.";
+      if (activeState?.status === "AWAITING_APPROVAL") {
+        return "Awaiting user confirmation before staging order and locking inventory.";
+      }
+      return "Checkout is staged after passing the deterministic safety gate.";
     }
 
     return STAGE_CONFIG[stageKey]?.defaultSummary || "";
   };
 
-  const stagesList = ["INTENT", "RESEARCH", "ANALYST", "EVALUATION", "RISK", "PURCHASE"];
+  const stagesList = ["INTENT", "RESEARCH", "EVIDENCE", "ANALYST", "EVALUATION", "RISK", "PURCHASE"];
+
 
   return (
     <div className="why-agent-chose-card">

@@ -17,7 +17,8 @@ from app.inventory.reservation import reserve_inventory, release_inventory, conf
 engine = init_db()
 SessionLocal = get_session_factory(engine)
 
-mcp = FastMCP("budbuy-merchant")
+mcp = FastMCP("shopai-merchant")
+
 
 
 def _db():
@@ -42,9 +43,6 @@ def search_products(category: str = "", brand: str = "", max_price: float = 0,
         if query_text:
             q = q.filter(Product.name.ilike(f"%{query_text}%") | Product.description.ilike(f"%{query_text}%"))
         results = q.limit(30).all()
-        if not results and (category or max_price or brand):
-            # Fallback to general audio catalog if strict criteria found 0 items
-            results = db.query(Product).limit(30).all()
         return json.dumps([{
             "product_id": p.id, "name": p.name, "brand": p.brand, "category": p.category,
             "price": p.price, "rating": p.rating, "specs": p.specs, "merchant_id": p.merchant_id,
@@ -60,27 +58,18 @@ def get_product_details(product_id: str) -> str:
     try:
         p = db.query(Product).filter_by(id=product_id).first()
         if not p:
-            # Verified fallback merchant for live external products
-            return json.dumps({
-                "product_id": product_id, "name": "Live Audio Product", "brand": "Audio", "category": "earbuds",
-                "price": 1999.0, "description": "Verified marketplace product", "specs": {"anc": True, "wireless": True},
-                "rating": 4.4, "review_count": 1500, "warranty_months": 12,
-                "merchant": {
-                    "id": "mer_verified", "name": "Verified Marketplace Store", "trust_score": 0.95,
-                    "negotiation_supported": True, "return_policy_days": 10,
-                },
-            })
+            return json.dumps({"error": "Product not found."})
         merchant = db.query(Merchant).filter_by(id=p.merchant_id).first() if p else None
         return json.dumps({
             "product_id": p.id, "name": p.name, "brand": p.brand, "category": p.category,
             "price": p.price, "description": p.description, "specs": p.specs,
             "rating": p.rating, "review_count": p.review_count, "warranty_months": p.warranty_months,
             "merchant": {
-                "id": merchant.id if merchant else "mer_default",
-                "name": merchant.name if merchant else "Verified Store",
-                "trust_score": merchant.trust_score if merchant else 0.95,
-                "negotiation_supported": merchant.negotiation_supported if merchant else True,
-                "return_policy_days": merchant.return_policy_days if merchant else 10,
+                "id": merchant.id if merchant else None,
+                "name": merchant.name if merchant else None,
+                "trust_score": merchant.trust_score if merchant else None,
+                "negotiation_supported": merchant.negotiation_supported if merchant else False,
+                "return_policy_days": merchant.return_policy_days if merchant else None,
             },
         })
     finally:
@@ -95,7 +84,7 @@ def check_stock(product_id: str) -> str:
     db = _db()
     try:
         inv = db.query(Inventory).filter_by(product_id=product_id).first()
-        available = inv.available_qty if inv else 10
+        available = inv.available_qty if inv else 0
         return json.dumps({"product_id": product_id, "available_qty": available})
     finally:
         db.close()
@@ -133,8 +122,10 @@ def compute_price_tool(product_id: str, negotiated_price: float = -1) -> str:
     db = _db()
     try:
         p = db.query(Product).filter_by(id=product_id).first()
-        price = negotiated_price if (negotiated_price and negotiated_price > 0) else (p.price if p else 1999.0)
-        return json.dumps({"base_price": p.price if p else 1999.0, "effective_price": price, "discount": 0.0})
+        if not p:
+            return json.dumps({"error": "Product not found."})
+        price = negotiated_price if (negotiated_price and negotiated_price > 0) else p.price
+        return json.dumps({"base_price": p.price, "effective_price": price, "discount": 0.0})
     finally:
         db.close()
 

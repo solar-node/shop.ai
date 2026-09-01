@@ -1,4 +1,4 @@
-"""BudBuy REST API."""
+"""Shop.ai REST API."""
 
 import json
 import os
@@ -19,16 +19,18 @@ load_dotenv()
 from app.agents.orchestrator import Orchestrator
 from app.observability.logger import get_session_ledger
 from app.payments.razorpay_client import verify_payment_signature
-from database.models import AgentSession, get_engine, get_session_factory
+from database.models import AgentSession, get_engine, get_session_factory, init_db
 
-app = FastAPI(title="BudBuy API", version="1.0.0")
+app = FastAPI(title="Shop.ai API", version="1.0.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
-_Session = get_session_factory(get_engine())
+_engine = init_db(get_engine())
+_Session = get_session_factory(_engine)
 _sessions = {}
 
 
@@ -72,7 +74,8 @@ def _json(data: dict) -> dict:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "budbuy-api"}
+    return {"status": "ok", "service": "shopai-api"}
+
 
 
 @app.get("/api/status")
@@ -99,9 +102,14 @@ def run_session(session_id: str, body: RunRequest):
     orch = Orchestrator(session_id, body.goal)
     _sessions[session_id] = orch
     try:
-        return _json(orch.run(body.simulate_oos, body.simulate_payment_timeout))
+        return _json(orch.run(
+            user_goal=body.goal,
+            simulate_oos=body.simulate_oos,
+            simulate_payment_timeout=body.simulate_payment_timeout,
+        ))
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error))
+
 
 
 @app.post("/api/session/{session_id}/confirm")

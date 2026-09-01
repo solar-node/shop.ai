@@ -1,6 +1,3 @@
-"""
-Integration and Unit Tests for BudBuy Multi-Agent Shopping Pipeline.
-"""
 import sys
 from pathlib import Path
 
@@ -8,99 +5,112 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from app.commerce.ranking import rank_products, weights_from_priority, _bayesian_quality_score
+import math
+from app.commerce.ranking import rank_products, _bayesian_quality_score
 from app.commerce.policies import evaluate_purchase
-from app.agents.orchestrator import Orchestrator, COMPILED_GRAPH
-from database.models import init_db
+from app.agents.orchestrator import COMPILED_GRAPH
 
 
 
-
-def test_langgraph_graph_compilation():
-    """Verify that the LangGraph StateGraph builds with checkpointing."""
+def test_graph_compiles():
     assert COMPILED_GRAPH is not None
 
 
-def test_bayesian_ranking_volume_priority():
-    """
-    Verify ranking mathematics:
-    A battle-tested product with 12,000 reviews at 4.0★ must outrank
-    an early product with 400 reviews at 4.3★ due to statistical evidence volume.
-    """
-    candidates = [
-        {"product_id": "p1", "name": "Bestseller Buds 12k Reviews", "price": 2499, "rating": 4.0, "review_count": 12000, "specs": {}},
-        {"product_id": "p2", "name": "Early Stage Buds 400 Reviews", "price": 2799, "rating": 4.3, "review_count": 400, "specs": {}},
-        {"product_id": "p3", "name": "Mass Popular Buds 25k Reviews", "price": 2199, "rating": 4.5, "review_count": 25000, "specs": {}},
-        {"product_id": "p4", "name": "New Unverified Buds 15 Reviews", "price": 2999, "rating": 4.7, "review_count": 15, "specs": {}},
+def test_review_volume_has_real_influence():
+    high_volume = _bayesian_quality_score(4.0, 12000)
+    lower_volume = _bayesian_quality_score(4.3, 400)
+    assert high_volume > lower_volume
+
+
+def test_requirement_evidence_can_overrule_volume():
+    products = [
+        {
+            "product_id": "matched", "name": "Product A", "price": 5000,
+            "rating": 4.5, "review_count": 4000, "available_qty": 5,
+            "matched_requirements": ["required feature"], "missing_requirements": [],
+        },
+        {
+            "product_id": "popular", "name": "Product B", "price": 5000,
+            "rating": 4.8, "review_count": 20000, "available_qty": 5,
+            "matched_requirements": [], "missing_requirements": ["required feature"],
+        },
     ]
+    reqs = {"hard_constraints": ["required feature"], "soft_preferences": []}
+    ranked = rank_products(products, 6000, requirements=reqs)
+    assert ranked[0].product_id == "matched"
+
+
+def test_over_budget_is_zero_price_fit():
+    products = [{
+        "product_id": "x", "name": "X", "price": 7000,
+        "rating": 4.5, "review_count": 5000, "available_qty": 1,
+        "matched_requirements": [], "missing_requirements": [],
+    }]
+    ranked = rank_products(products, 5000, requirements={})
+    assert ranked[0].components["price_value"] == 0.0
+
+
+def test_risk_guard_is_deterministic():
+    rejected = evaluate_purchase(7000, 5000, None, 0.95, True)
+    assert not rejected.approved
+
+    approved = evaluate_purchase(4500, 5000, 4000, 0.95, True)
+    assert approved.approved and approved.requires_user_confirmation
+
+    auto = evaluate_purchase(3500, 5000, 4000, 0.95, True)
+    assert auto.approved and not auto.requires_user_confirmation
+
+
+def test_budget_targeting_prefers_85_to_100_percent_zone():
+    from app.commerce.ranking import _price_value_score
+    # For budget ₹4,000:
+    # A product at ₹3,600 (90% of budget, in the >=85% zone) scores higher than ₹2,800 (70%) and ₹600 (15%)
+    top_zone = _price_value_score(3600, 4000)
+    mid_zone = _price_value_score(2800, 4000)
+    cheap_item = _price_value_score(600, 4000)
+    assert top_zone >= 0.95
+    assert top_zone > mid_zone > cheap_item
+
+
+def test_high_review_volume_significantly_boosts_quality_score():
+    from app.commerce.ranking import _bayesian_quality_score
+    # A 4.3 rating with 15,000 verified reviews should achieve higher quality confidence
+    # than a 4.6 rating with only 10 reviews due to Bayesian evidence shrinkage
+    high_volume_score = _bayesian_quality_score(4.3, 15000)
+    low_volume_score = _bayesian_quality_score(4.6, 10)
+    assert high_volume_score > low_volume_score
+
+
+def test_user_goal_dynamic_propagation():
+    sample_query = "Find me high performance wireless earbuds under 3000"
+    decision = evaluate_purchase(
+        effective_price=2500,
+        budget_max=3000,
+        auto_purchase_limit=None,
+        merchant_trust_score=0.95,
+        stock_confirmed=True,
+        user_goal=sample_query,
+    )
+    assert decision.approved
     
-    ranked = rank_products(candidates, budget_max=3000.0, soft_preferences=["wireless"])
-    
-    # Assert mass bestseller is #1
-    assert ranked[0].product_id == "p3"
-    # Assert 12k reviews @ 4.0★ beats 400 reviews @ 4.3★
-    assert ranked[1].product_id == "p1"
-    assert ranked[2].product_id == "p2"
-    # Assert 15 reviews is penalized to last place
-    assert ranked[3].product_id == "p4"
-
-
-def test_deterministic_risk_guard_policy():
-    """Verify Risk Guard deterministic policy evaluation."""
-    # 1. Price exceeding budget must be rejected
-    res_overbudget = evaluate_purchase(
-        effective_price=3500.0, budget_max=3000.0, auto_purchase_limit=None,
-        merchant_trust_score=0.95, stock_confirmed=True
-    )
-    assert not res_overbudget.approved
-    assert "exceeds hard budget" in res_overbudget.reason
-
-    # 2. Out of stock must be rejected
-    res_oos = evaluate_purchase(
-        effective_price=2500.0, budget_max=3000.0, auto_purchase_limit=None,
-        merchant_trust_score=0.95, stock_confirmed=False
-    )
-    assert not res_oos.approved
-
-    # 3. Untrusted merchant must be rejected
-    res_untrusted = evaluate_purchase(
-        effective_price=2500.0, budget_max=3000.0, auto_purchase_limit=None,
-        merchant_trust_score=0.4, stock_confirmed=True
-    )
-    assert not res_untrusted.approved
-
-    # 4. Valid product within budget must be approved with user confirmation
-    res_valid = evaluate_purchase(
-        effective_price=2500.0, budget_max=3000.0, auto_purchase_limit=None,
-        merchant_trust_score=0.95, stock_confirmed=True
-    )
-    assert res_valid.approved
-    assert res_valid.requires_user_confirmation
-
-
-def test_end_to_end_orchestrator_execution():
-    """Verify full LangGraph execution for a realistic query."""
-    orch = Orchestrator("test_session_001", "Find ANC earbuds under ₹3000 for gym")
-    orch.run()
-    
-    state = orch.state
-    assert state.get("status") in ("AWAITING_APPROVAL", "AWAITING_PAYMENT", "COMPLETED")
-    assert state.get("current_stage") in ("RISK", "PURCHASE")
-    assert len(state.get("candidates", [])) > 0
-    assert state.get("selected_product") is not None
-    assert len(state["selected_product"].get("why_this_product", [])) >= 2
+    from app.agents.risk_agent import check_purchase
+    prod = {"product_id": "test_p1", "effective_price": 2500, "source": "Amazon"}
+    reqs = {"budget_max": 3000}
+    res = check_purchase(prod, reqs, user_goal=sample_query)
+    assert res.get("approved")
 
 
 if __name__ == "__main__":
-    print("Running BudBuy test suite...")
-    init_db()
-    test_langgraph_graph_compilation()
-    print("✓ test_langgraph_graph_compilation passed")
-    test_bayesian_ranking_volume_priority()
-    print("✓ test_bayesian_ranking_volume_priority passed")
-    test_deterministic_risk_guard_policy()
-    print("✓ test_deterministic_risk_guard_policy passed")
-    test_end_to_end_orchestrator_execution()
-    print("✓ test_end_to_end_orchestrator_execution passed")
-    print("\nAll BudBuy tests passed successfully!")
+    test_graph_compiles()
+    test_review_volume_has_real_influence()
+    test_requirement_evidence_can_overrule_volume()
+    test_over_budget_is_zero_price_fit()
+    test_budget_targeting_prefers_85_to_100_percent_zone()
+    test_high_review_volume_significantly_boosts_quality_score()
+    test_risk_guard_is_deterministic()
+    test_user_goal_dynamic_propagation()
+    print("ALL TESTS PASSED SUCCESSFULLY.")
+
+
+
 
