@@ -1,6 +1,7 @@
 // Keep all frontend requests in one place.
+const API_URL = import.meta.env.VITE_API_URL || "";
+const BASE = API_URL ? `${API_URL.replace(/\/$/, "")}/api` : "/api";
 
-const BASE = "/api";
 
 async function request(method, path, body) {
   const options = {

@@ -201,10 +201,11 @@ Then open the frontend URL shown by Vite.
 
 ## Testing
 
-Backend syntax / unit checks:
+Backend unit & benchmark tests:
 
 ```bash
-python -m pytest tests/test_pipeline.py
+python tests/test_pipeline.py
+python scripts/evaluate_system.py
 ```
 
 Frontend production build:
@@ -214,8 +215,53 @@ cd frontend
 npm run build
 ```
 
+## Deployment
+
+### 1. Local Docker Testing (Backend)
+
+Build and run the FastAPI backend container locally:
+
+```bash
+# Build Docker image
+docker build -t shopai-backend .
+
+# Run container with your .env
+docker run -p 8000:8000 --env-file .env shopai-backend
+```
+
+Test health endpoint:
+```bash
+curl http://localhost:8000/api/health
+```
+
+### 2. Deploying Backend to Render
+
+1. Push your repository to GitHub.
+2. In [Render Dashboard](https://dashboard.render.com), click **New +** $\rightarrow$ **Web Service**.
+3. Connect your GitHub repository.
+4. Set **Environment** to **Docker** (or Python 3).
+5. Add the following **Environment Variables** in Render:
+   - `GEMINI_API_KEY`
+   - `SERPAPI_KEY`
+   - `RAZORPAY_KEY_ID`
+   - `RAZORPAY_KEY_SECRET`
+   - `LANGSMITH_TRACING` (`true`)
+   - `LANGSMITH_API_KEY`
+   - `LANGSMITH_PROJECT` (`shop.ai`)
+   - `LANGSMITH_ENDPOINT` (`https://api.smith.langchain.com`)
+6. Click **Deploy Web Service**. Render will provide a public URL (e.g. `https://shopai-backend.onrender.com`).
+
+### 3. Deploying Frontend to Vercel
+
+1. In [Vercel Dashboard](https://vercel.com), click **Add New...** $\rightarrow$ **Project**.
+2. Select your repository and set the **Root Directory** to `frontend`.
+3. Add the following **Environment Variable**:
+   - `VITE_API_URL`: `https://your-shopai-backend.onrender.com` (your Render backend URL).
+4. Click **Deploy**.
+
 ## Security
 
 Never commit `.env`, database files, API keys or generated frontend artifacts. Use `.env.example` as the configuration template.
 
 Razorpay credentials remain backend-only. The frontend receives only the public Razorpay key ID required by Checkout.
+

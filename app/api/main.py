@@ -23,11 +23,17 @@ from database.models import AgentSession, get_engine, get_session_factory, init_
 
 app = FastAPI(title="Shop.ai API", version="1.0.0")
 
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()] if allowed_origins_env else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 
 _engine = init_db(get_engine())
 _Session = get_session_factory(_engine)
