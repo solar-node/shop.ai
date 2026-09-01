@@ -1,4 +1,5 @@
-# shop.ai — Autonomous Shopping Agent
+# shop.ai — Autonomous Multi-Agent Shopping Assistant
+
 
 shop.ai is an AI-native shopping agent that turns a natural-language shopping goal into a researched, evidence-backed and policy-checked purchase.
 
