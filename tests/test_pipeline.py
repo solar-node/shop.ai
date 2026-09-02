@@ -103,17 +103,97 @@ def test_user_goal_dynamic_propagation():
     assert res.get("approved")
 
 
+def test_category_aware_spec_extraction():
+    from app.commerce.spec_extractor import extract_product_specs
+    
+    # 1. Laptop
+    laptop_specs = extract_product_specs("ASUS Vivobook 15 Core i5 13th Gen (16GB RAM / 512GB SSD / Windows 11)", category="laptop")
+    assert laptop_specs.get("ram") == "16GB"
+    assert "512GB" in laptop_specs.get("storage", "")
+
+    # 2. Headphones
+    headphone_specs = extract_product_specs("Sony WH-1000XM4 Wireless Active Noise Cancelling Headphones 30H Battery", category="headphones")
+    assert headphone_specs.get("noise_cancellation") == "Active Noise Cancellation (ANC)"
+    assert "30" in headphone_specs.get("battery_life", "")
+
+    # 3. Monitor
+    monitor_specs = extract_product_specs("LG UltraGear 27 inch QHD 144Hz IPS Gaming Monitor Height Adjustable Stand", category="monitor")
+    assert monitor_specs.get("refresh_rate") == "144HZ"
+    assert monitor_specs.get("screen_size") == "27 inch"
+    assert "Height Adjustable" in monitor_specs.get("stand", "")
+
+    # 4. Smartphone
+    phone_specs = extract_product_specs("OnePlus 12R 5G (16GB RAM, 256GB Storage, 50MP OIS Camera, 5500mAh Battery, 100W Fast Charging)", category="smartphone")
+    assert phone_specs.get("ram") == "16GB"
+    assert "50MP" in phone_specs.get("camera", "")
+    assert "100W" in phone_specs.get("fast_charging", "")
+
+    # 5. Running Shoes
+    shoe_specs = extract_product_specs("Nike Air Zoom Pegasus 40 Men Road Running Shoes with Responsive Cushioning Wide Fit", category="shoes")
+    assert "Air Zoom" in shoe_specs.get("cushioning", "")
+    assert shoe_specs.get("usage") == "Road Running"
+    assert shoe_specs.get("fit") == "Wide Fit"
+
+
+def test_grounded_requirement_matching():
+    from app.commerce.spec_extractor import match_requirements_against_product
+
+    product = {
+        "name": "ASUS Vivobook 15 Core i5 13th Gen (16GB RAM / 512GB SSD / Win 11)",
+        "specs": {"ram": "16GB", "storage": "512GB SSD", "processor": "Intel Core i5"},
+    }
+    reqs = {
+        "hard_constraints": ["16GB RAM", "512GB SSD"],
+        "soft_preferences": ["good processor", "decent battery life"],
+        "priority_order": ["performance", "RAM", "SSD", "battery"],
+    }
+    matched, missing, score = match_requirements_against_product(product, reqs)
+    assert "16GB RAM" in matched
+    assert "512GB SSD" in matched
+    assert "good processor" in matched
+    assert "decent battery life" in missing
+    assert score >= 0.70
+
+
+def test_stock_availability_scoring():
+    from app.commerce.ranking import _availability_score
+
+    assert _availability_score(10, "in_stock") == 1.0
+    assert _availability_score(None, "in_stock") == 1.0
+    assert _availability_score(None, "free delivery") == 1.0
+    assert _availability_score(0, "in_stock") == 0.0
+    assert _availability_score(None, "out of stock") == 0.0
+    assert _availability_score(None, None) == 0.85
+
+
+def test_priority_weighting_shifts_weights():
+    from app.commerce.ranking import weights_from_priority, DEFAULT_WEIGHTS
+
+    perf_weights = weights_from_priority(["performance"], user_goal="Please prioritize performance over display quality")
+    assert perf_weights["feature_match"] > DEFAULT_WEIGHTS["feature_match"]
+
+    budget_weights = weights_from_priority(["price"], user_goal="I want the cheapest budget saver option")
+    assert budget_weights["price_value"] > DEFAULT_WEIGHTS["price_value"]
+
+    brand_weights = weights_from_priority(["brand"], user_goal="Prefer a reliable brand with top ratings")
+    assert brand_weights["quality"] > DEFAULT_WEIGHTS["quality"]
+
+
 if __name__ == "__main__":
     test_graph_compiles()
     test_review_volume_has_real_influence()
     test_requirement_evidence_can_overrule_volume()
     test_over_budget_is_zero_price_fit()
     test_budget_targeting_prefers_90_to_100_percent_zone()
-
     test_high_review_volume_significantly_boosts_quality_score()
     test_risk_guard_is_deterministic()
     test_user_goal_dynamic_propagation()
+    test_category_aware_spec_extraction()
+    test_grounded_requirement_matching()
+    test_stock_availability_scoring()
+    test_priority_weighting_shifts_weights()
     print("ALL TESTS PASSED SUCCESSFULLY.")
+
 
 
 

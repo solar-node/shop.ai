@@ -142,9 +142,10 @@ def analyst_node(state: BudBuyState) -> dict:
         evidence,
         budget_max=float(reqs.get("budget_max") or 0),
         requirements=reqs,
-        weights=weights_from_priority(reqs.get("priority_order")),
+        weights=weights_from_priority(reqs.get("priority_order"), reqs, state.get("user_goal", "")),
         user_goal=state.get("user_goal", ""),
     )
+
     lookup = {str(x.get("product_id")): x for x in evidence}
     candidates = []
     for i, item in enumerate(ranked, 1):

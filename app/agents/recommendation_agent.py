@@ -50,14 +50,15 @@ RETURN ONLY VALID JSON matching this exact schema:
 
 
 def _differentiated_fallback_reasons(candidate: dict, reqs: dict, user_goal: str, rank: int, top_score: float = 0.56) -> list:
-    """Intelligent, differentiated fallback reasoning when LLM is unavailable or rate-limited."""
+    """Intelligent, evidence-grounded fallback reasoning when LLM is unavailable or rate-limited."""
     price = float(candidate.get("price") or candidate.get("effective_price") or 0)
     budget = float(reqs.get("budget_max") or 0)
     rating = float(candidate.get("rating") or 0)
     reviews = int(candidate.get("review_count") or 0)
     raw_score = float(candidate.get("utility_score") or 0)
-    score_pct = Math_round_pct = round(raw_score * 100) if raw_score > 0 else (56 if rank == 1 else (52 if rank == 2 else 50))
-    matched = candidate.get("matched_requirements") or []
+    score_pct = round(raw_score * 100) if raw_score > 0 else (56 if rank == 1 else (52 if rank == 2 else 50))
+    matched = [str(x) for x in candidate.get("matched_requirements", []) if str(x).strip()]
+    missing = [str(x) for x in candidate.get("missing_requirements", []) if str(x).strip()]
     use_case = reqs.get("use_case") or reqs.get("category") or "your requirements"
     reasons = []
 
@@ -65,57 +66,63 @@ def _differentiated_fallback_reasons(candidate: dict, reqs: dict, user_goal: str
 
     if rank == 1:
         # Rank 1: Winner & Best Overall Match
-        if budget > 0 and 0.70 <= ratio <= 1.00:
-            pct_str = f"{round(ratio * 100)}%"
-            reasons.append(f"Its ₹{price:,.0f} price sits at roughly {pct_str} of the ₹{budget:,.0f} budget, giving it strong alignment with the preferred spending range.")
-        elif budget > 0 and price <= budget:
-            reasons.append(f"At ₹{price:,.0f}, it remains comfortably within your ₹{budget:,.0f} budget ceiling while delivering top-tier specifications.")
-
         if matched:
             matched_summary = " and ".join(matched[:2])
-            reasons.append(f"The {matched_summary} directly address your core priority for {use_case}.")
-        elif rating > 0:
-            reasons.append(f"Features and specifications closely align with your requested shopping goal.")
+            reasons.append(f"Directly satisfies your core requirements with verified {matched_summary} for {use_case}.")
+        elif missing:
+            reasons.append(f"Top overall category match, though {missing[0]} could not be independently verified from the listing text.")
+        else:
+            reasons.append(f"Selected as the top category candidate matching your shopping query.")
+
+        if budget > 0 and 0.85 <= ratio <= 1.00:
+            pct_str = f"{round(ratio * 100)}%"
+            reasons.append(f"Its ₹{price:,.0f} price sits at {pct_str} of the ₹{budget:,.0f} budget, utilizing the allocated budget for higher build quality.")
+        elif budget > 0 and price <= budget:
+            reasons.append(f"At ₹{price:,.0f}, it remains within your ₹{budget:,.0f} budget ceiling while delivering top-tier performance.")
 
         if reviews > 0 and rating > 0:
-            reasons.append(f"A {rating:.1f}★ rating across {reviews:,}+ reviews provides substantially stronger review evidence than several lower-ranked alternatives.")
+            reasons.append(f"Backed by a {rating:.1f}★ rating across {reviews:,}+ verified reviews, providing high statistical confidence.")
 
-        reasons.append(f"Its {score_pct}% Bayesian fit score reflects the strongest overall match among the evaluated evidence.")
+        reasons.append(f"Achieves a {score_pct}% Bayesian product-fit score, reflecting the strongest overall evidence among evaluated options.")
 
     elif rank == 2:
-        # Rank 2: High Value Runner-up / Headroom alternative
+        # Rank 2: High Value Runner-up / Close alternative
+        if matched:
+            reasons.append(f"Satisfies key specifications including {matched[0]}, offering a competitive alternative for {use_case}.")
+        elif missing:
+            reasons.append(f"Solid category match, though {missing[0]} was unverified in available evidence.")
+        else:
+            reasons.append(f"Provides solid everyday performance for {use_case}.")
+
         if budget > 0:
             headroom = budget - price
             if headroom > 0:
-                reasons.append(f"At ₹{price:,.0f}, it leaves ₹{headroom:,.0f} in budget headroom while still remaining above the preferred spending threshold.")
+                reasons.append(f"Priced at ₹{price:,.0f}, leaving ₹{headroom:,.0f} in budget headroom as a close alternative.")
             else:
-                reasons.append(f"Priced at ₹{price:,.0f}, it matches the designated budget ceiling as a close alternative.")
-
-        if matched:
-            reasons.append(f"Key specifications satisfy your {use_case} needs, although with slightly fewer matched secondary preferences than the #1 match.")
-        else:
-            reasons.append(f"Available evidence suggests solid everyday performance for {use_case}.")
+                reasons.append(f"At ₹{price:,.0f}, it matches your designated budget ceiling.")
 
         if reviews > 0 and rating > 0:
-            reasons.append(f"Backed by a {rating:.1f}★ rating from {reviews:,}+ verified users, offering dependable customer satisfaction.")
+            reasons.append(f"Maintains a dependable {rating:.1f}★ satisfaction score across {reviews:,}+ verified buyers.")
 
-        reasons.append(f"Its {score_pct}% Bayesian score places it as a competitive runner-up behind the selected product.")
+        reasons.append(f"Earns a {score_pct}% Bayesian score as the top runner-up candidate.")
 
     else:
-        # Rank 3+: Budget Saver / Economical option
+        # Rank 3+: Budget / Value Alternative
+        if matched:
+            reasons.append(f"Covers fundamental features including {matched[0]}, trading off secondary extras for pricing.")
+        elif missing:
+            reasons.append(f"Economical option, though {missing[0]} remains unverified in listing specifications.")
+        else:
+            reasons.append(f"Accessible entry point for {use_case} with economical pricing.")
+
         if budget > 0:
             savings = budget - price
-            if savings > 0 and ratio < 0.70:
-                reasons.append(f"Priced at ₹{price:,.0f}, it offers the most economical entry point with ₹{savings:,.0f} in cost savings under your budget.")
+            if savings > 0 and ratio < 0.80:
+                reasons.append(f"At ₹{price:,.0f}, it offers ₹{savings:,.0f} in cost savings under your budget.")
             else:
                 reasons.append(f"At ₹{price:,.0f}, it provides an accessible price point within your ₹{budget:,.0f} limit.")
 
-        if matched:
-            reasons.append(f"Covers fundamental features including {matched[0]}, trading off premium extras for maximum affordability.")
-        else:
-            reasons.append(f"Satisfies baseline requirements for {use_case} with economical pricing.")
-
-        reasons.append(f"Its {score_pct}% Bayesian score reflects a trade-off in relative build tier versus the top choices while prioritizing budget.")
+        reasons.append(f"Its {score_pct}% Bayesian score reflects an economical trade-off versus higher-tier alternatives.")
 
     return reasons[:4]
 
@@ -144,21 +151,23 @@ def synthesize_all_candidate_reasons(candidates: list, reqs: dict, user_goal: st
             "rating": c.get("rating"),
             "review_count": c.get("review_count"),
             "bayesian_fit_score": fit_pct,
+            "specs": c.get("specs", {}),
             "matched_requirements": c.get("matched_requirements", []),
+            "missing_requirements": c.get("missing_requirements", []),
+            "components": c.get("components", {}),
             "source": c.get("source", ""),
         })
 
     payload = {
         "user_goal": user_goal,
         "requirements": reqs,
-        "preferred_budget_range": "70% to 100% of budget",
+        "preferred_budget_range": "85% to 100% of budget",
         "candidates": simplified_list,
     }
 
     result = call_structured(PROMPT, json.dumps(payload, ensure_ascii=False, default=str), max_tokens=1400)
     reasons_map = result.get("candidates_reasons", {}) if isinstance(result, dict) else {}
 
-    # Verify and complete for each candidate with fallback if needed
     top_score = float(top_candidates[0].get("utility_score") or 0.56)
     final_reasons = {}
     for i, c in enumerate(top_candidates):
@@ -177,6 +186,7 @@ def synthesize_all_candidate_reasons(candidates: list, reqs: dict, user_goal: st
         "candidates_reasons": final_reasons,
         "overall_recommendation": overall_rec,
     }
+
 
 
 def synthesize_recommendation_and_reasons(candidate: dict, reqs: dict, user_goal: str = "", rev_info: dict = None) -> dict:

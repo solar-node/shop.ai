@@ -13,7 +13,7 @@ except ImportError:
             return f
         return decorator
 
-DEFAULT_WEIGHTS = {"quality": 0.42, "feature_match": 0.28, "price_value": 0.22, "availability": 0.08}
+DEFAULT_WEIGHTS = {"feature_match": 0.35, "quality": 0.30, "price_value": 0.25, "availability": 0.10}
 
 PRIOR_RATING = 3.8
 PRIOR_REVIEW_WEIGHT = 100.0
@@ -33,7 +33,8 @@ class RankedProduct:
 
 
 def _bayesian_quality_score(rating: float, review_count: int) -> float:
-    """Rating quality with high review-volume importance and Bayesian shrinkage.
+    """Rating quality with review-volume confidence and Bayesian shrinkage.
+    Formula: R_adj = (v * R + m * C) / (v + m)
     Products with higher review volumes gain significant statistical confidence,
     ensuring highly-reviewed products outrank low-volume items with few reviews.
     """
@@ -72,33 +73,36 @@ def _price_value_score(price: float, budget_max: float) -> float:
         return round(0.05 + 0.25 * (ratio / 0.60), 4)
 
 
+def _feature_match_score(candidate: dict, requirements: dict, user_goal: str = "") -> float:
+    """Score evidence-backed requirement and specification match."""
+    if "feature_match_score" in candidate and isinstance(candidate["feature_match_score"], (int, float)):
+        return float(candidate["feature_match_score"])
+
+    from app.commerce.spec_extractor import match_requirements_against_product
+    _, _, score = match_requirements_against_product(candidate, requirements, user_goal)
+    return score
 
 
+def _availability_score(qty: Any, availability_status: Any = "in_stock") -> float:
+    """Stock availability score:
+    - In stock with verified quantity > 0: 1.0
+    - Active marketplace listing / in_stock: 1.0
+    - Unknown stock status: 0.85 (neutral/available)
+    - Confirmed out of stock: 0.0
+    """
+    if isinstance(qty, (int, float)):
+        if qty <= 0:
+            return 0.0
+        return 1.0
 
-def _feature_match_score(candidate: dict, requirements: dict) -> float:
-    """Score the LLM's evidence labels; no category/attribute vocabulary is required."""
-    matched = {str(x).strip().lower() for x in candidate.get("matched_requirements", []) if str(x).strip()}
-    missing = {str(x).strip().lower() for x in candidate.get("missing_requirements", []) if str(x).strip()}
-    requested = [str(x).strip().lower() for x in (
-        requirements.get("hard_constraints", []) + requirements.get("soft_preferences", [])
-    ) if str(x).strip()]
+    if isinstance(availability_status, str):
+        s = availability_status.strip().lower()
+        if any(w in s for w in ("out of stock", "unavailable", "sold out", "oos")):
+            return 0.0
+        if any(w in s for w in ("in stock", "in_stock", "available", "free delivery", "delivery")):
+            return 1.0
 
-    if requested:
-        supported = sum(1 for r in requested if any(r == m or r in m or m in r for m in matched))
-        unsupported = sum(1 for r in requested if any(r == m or r in m or m in r for m in missing))
-        score = supported / len(requested)
-        score -= 0.25 * (unsupported / len(requested))
-        return round(min(max(score, 0.0), 1.0), 4)
-
-    # If the LLM supplied no explicit requirements, do not fabricate a feature score.
-    return 0.5
-
-
-def _availability_score(qty: Any) -> float:
-    try:
-        return 1.0 if float(qty) > 0 else 0.0
-    except (TypeError, ValueError):
-        return 0.0
+    return 0.85
 
 
 @traceable(run_type="chain", name="Bayesian Product Analyst Ranker")
@@ -106,19 +110,19 @@ def rank_products(candidates: list, budget_max: float, soft_preferences: List[st
                   weights: Dict[str, float] = None, brand_preference: str = "",
                   requirements: dict = None, user_goal: str = "") -> List[RankedProduct]:
 
-
-    requirements = requirements or {"soft_preferences": soft_preferences or [], "hard_constraints": []}
-    weights = weights or DEFAULT_WEIGHTS
+    requirements = requirements or {"soft_preferences": soft_preferences or [], "hard_constraints": [], "brand_preference": brand_preference}
+    weights = weights or weights_from_priority(requirements.get("priority_order"), requirements, user_goal)
     ranked = []
+    
     for c in candidates:
         price = float(c.get("price") or c.get("effective_price") or 0)
         rating = float(c.get("rating") or 0)
         reviews = int(c.get("review_count") or 0)
         components = {
+            "feature_match": _feature_match_score(c, requirements, user_goal),
             "quality": _bayesian_quality_score(rating, reviews),
-            "feature_match": _feature_match_score(c, requirements),
             "price_value": _price_value_score(price, float(budget_max or 0)),
-            "availability": _availability_score(c.get("available_qty", 0)),
+            "availability": _availability_score(c.get("available_qty"), c.get("availability")),
         }
         score = sum(components[k] * float(weights.get(k, 0)) for k in components)
         ranked.append(RankedProduct(
@@ -126,11 +130,25 @@ def rank_products(candidates: list, budget_max: float, soft_preferences: List[st
             utility_score=round(score, 4), components=components,
             image_url=c.get("image_url", ""), flipkart_url=c.get("flipkart_url", ""), source=c.get("source", "")
         ))
-    return sorted(ranked, key=lambda x: (-x.utility_score, -x.components["quality"], x.price))
+    return sorted(ranked, key=lambda x: (-x.utility_score, -x.components["feature_match"], -x.components["quality"], x.price))
 
 
-def weights_from_priority(priority: Any) -> Dict[str, float]:
-    """Keep weights stable; user priorities are represented by LLM requirement matching.
-    This avoids another hidden vocabulary map inside the mathematical ranker.
-    """
+def weights_from_priority(priority: Any = None, requirements: dict = None, user_goal: str = "") -> Dict[str, float]:
+    """Dynamically adjusts ranking weights when user explicitly specifies priorities."""
+    text = (str(user_goal) + " " + " ".join(str(p) for p in (priority or []))).lower()
+    
+    # 1. Feature / Performance / Specification heavy priorities
+    if any(w in text for w in ("prioritize performance", "performance over", "camera quality is highest", "highest priority", "main priority", "anc is must", "highest spec")):
+        return {"feature_match": 0.45, "quality": 0.25, "price_value": 0.20, "availability": 0.10}
+
+    # 2. Budget / Cost Saver priorities
+    if any(w in text for w in ("cheapest", "lowest price", "budget saver", "most economical", "tight budget", "price first")):
+        return {"feature_match": 0.28, "quality": 0.25, "price_value": 0.37, "availability": 0.10}
+
+    # 3. Brand / Trust / Rating priorities
+    if any(w in text for w in ("reliable brand", "prefer a reliable", "highest rated", "top rated", "most trusted", "best brand")):
+        return {"feature_match": 0.30, "quality": 0.40, "price_value": 0.20, "availability": 0.10}
+
+    # Standard documented default architecture
     return dict(DEFAULT_WEIGHTS)
+

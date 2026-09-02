@@ -44,6 +44,8 @@ def synthesize_evidence(
     if not marketplace_data:
         return []
 
+    from app.commerce.spec_extractor import extract_product_specs, match_requirements_against_product
+
     payload = {
         "user_goal": user_goal,
         "requirements": requirements,
@@ -55,27 +57,62 @@ def synthesize_evidence(
     normalized = result.get("normalized_products", []) if isinstance(result, dict) else []
     by_id = {str(x.get("product_id")): x for x in normalized if isinstance(x, dict) and x.get("product_id")}
 
-    # Safe merge: raw marketplace facts remain authoritative if the LLM omitted them.
     output = []
+    category = str(requirements.get("category") or "")
+
     for raw in marketplace_data:
         pid = str(raw.get("product_id"))
-        item = dict(by_id.get(pid, {}))
-        item["product_id"] = raw.get("product_id")
-        item["name"] = raw.get("name", item.get("name", ""))
-        item["price"] = raw.get("price", item.get("price", 0))
-        item["source"] = raw.get("source", item.get("source", ""))
-        item["seller"] = raw.get("seller", item.get("seller", raw.get("source", "")))
-        item["image_url"] = raw.get("image_url", item.get("image_url", ""))
-        item["flipkart_url"] = raw.get("flipkart_url", item.get("flipkart_url", ""))
-        item["delivery"] = raw.get("delivery", item.get("delivery", ""))
-        item["old_price"] = raw.get("old_price", item.get("old_price"))
-        item["discount_pct"] = raw.get("discount_pct", item.get("discount_pct"))
-        item["available_qty"] = raw.get("available_qty", item.get("available_qty", 0))
-        item["rating"] = raw.get("rating", item.get("rating"))
-        item["review_count"] = raw.get("review_count", item.get("review_count"))
-        item["specs"] = raw.get("specs", item.get("specs", {})) or {}
-        item["attributes"] = item.get("attributes", {}) or {}
-        item["matched_requirements"] = item.get("matched_requirements", []) or []
-        item["missing_requirements"] = item.get("missing_requirements", []) or []
+        llm_item = dict(by_id.get(pid, {}))
+        
+        name = raw.get("name", llm_item.get("name", ""))
+        delivery = raw.get("delivery", llm_item.get("delivery", ""))
+        badge = raw.get("badge", llm_item.get("badge", ""))
+        
+        # 1. Deterministic evidence extraction
+        raw_specs = raw.get("specs") or {}
+        extracted_specs = extract_product_specs(name, snippet=delivery, category=category, badge=badge)
+        merged_specs = {**raw_specs, **extracted_specs, **(llm_item.get("specs") or {})}
+        
+        # 2. Merge attributes
+        merged_attributes = {**merged_specs, **(raw.get("attributes") or {}), **(llm_item.get("attributes") or {})}
+        
+        item = {
+            "product_id": raw.get("product_id"),
+            "name": name,
+            "price": raw.get("price", llm_item.get("price", 0)),
+            "source": raw.get("source", llm_item.get("source", "")),
+            "seller": raw.get("seller", llm_item.get("seller", raw.get("source", ""))),
+            "image_url": raw.get("image_url", llm_item.get("image_url", "")),
+            "flipkart_url": raw.get("flipkart_url", llm_item.get("flipkart_url", "")),
+            "delivery": delivery,
+            "old_price": raw.get("old_price", llm_item.get("old_price")),
+            "discount_pct": raw.get("discount_pct", llm_item.get("discount_pct")),
+            "available_qty": raw.get("available_qty", llm_item.get("available_qty")),
+            "availability": raw.get("availability", llm_item.get("availability", "in_stock")),
+            "rating": raw.get("rating", llm_item.get("rating")),
+            "review_count": raw.get("review_count", llm_item.get("review_count")),
+            "specs": merged_specs,
+            "attributes": merged_attributes,
+        }
+
+        # 3. Grounded requirement matching
+        matched, missing, feat_score = match_requirements_against_product(item, requirements, user_goal)
+        
+        # Incorporate LLM matched requirements if supported by text
+        llm_matched = [str(x).strip() for x in llm_item.get("matched_requirements", []) if str(x).strip()]
+        for m in llm_matched:
+            if m.lower() not in [x.lower() for x in matched]:
+                matched.append(m)
+
+        llm_missing = [str(x).strip() for x in llm_item.get("missing_requirements", []) if str(x).strip()]
+        for mis in llm_missing:
+            if mis.lower() not in [x.lower() for x in missing] and mis.lower() not in [x.lower() for x in matched]:
+                missing.append(mis)
+
+        item["matched_requirements"] = matched
+        item["missing_requirements"] = missing
+        item["feature_match_score"] = feat_score
         output.append(item)
+
     return output
+

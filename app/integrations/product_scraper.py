@@ -77,6 +77,8 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                     badge = item.get("badge") or ""
                     
                     img = item.get("thumbnail") or item.get("thumbnail_url") or ""
+                    from app.commerce.spec_extractor import extract_product_specs
+                    extracted_specs = extract_product_specs(title, snippet=delivery_info, badge=badge)
 
                     results.append({
                         "product_id":   f"serp_{abs(hash(title)) % 1000000}",
@@ -91,9 +93,12 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                         "source":       source_name,
                         "delivery":     delivery_info,
                         "badge":        badge,
-                        "specs":        {},
+                        "specs":        extracted_specs,
+                        "attributes":   extracted_specs,
+                        "availability": "in_stock",
                         "available_qty": None,
                     })
+
 
                 if results:
                     # Deduplicate by normalized title

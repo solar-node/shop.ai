@@ -40,7 +40,9 @@ Reason from the actual request; do not copy example values into unrelated querie
 def _heuristic_fallback(text: str) -> dict:
     """Minimal outage fallback: extract only information that can be safely inferred generically."""
     t = text.lower()
-    # First search for explicit budget phrases (e.g. under ₹70,000, below 4000)
+    
+    # 1. Budget extraction
+    budget = None
     budget_match = re.search(r"(?:under|below|within|budget(?:\s+of)?|max(?:\s+of)?|<=?)\s*(?:₹|rs\.?|inr)?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})", t)
     if budget_match:
         budget = int(budget_match.group(1).replace(",", ""))
@@ -53,33 +55,101 @@ def _heuristic_fallback(text: str) -> dict:
     if any(x in t for x in ("auto-buy", "autobuy", "auto buy", "auto-pay", "autopay", "automatically")):
         auto = budget
 
-    category_match = re.search(
-        r"(?:find|buy|want|need|looking for|best)\s+(?:an?\s+|the\s+)?(.+?)(?:\s+(?:under|below|within|for|with)\b|$)",
-        t,
-    )
-    category = "product"
-    if category_match:
-        words = re.sub(r"[^a-z0-9 -]", " ", category_match.group(1)).split()
-        category = " ".join(words[-3:]) or category
+    # 2. Category inference
+    category = ""
+    known_cats = [
+        ("running shoes", ["running shoes", "running shoe", "road running shoes", "running sneakers", "jogging shoes"]),
+        ("laptop", ["laptop", "notebook", "macbook", "ultrabook"]),
+        ("monitor", ["monitor", "display", "gaming monitor"]),
+        ("smartphone", ["smartphone", "mobile phone", "phone", "android phone", "iphone"]),
+        ("earbuds", ["earbuds", "earbud", "tws", "airpods"]),
+        ("headphones", ["headphones", "headphone", "earphones", "earphone", "neckband", "headset"]),
+        ("smartwatch", ["smartwatch", "fitness band", "smart watch", "watch"]),
+        ("camera", ["camera", "dslr", "mirrorless"]),
+    ]
 
-    prefs = []
-    for phrase in re.findall(r"(?:with|for)\s+([^,]+)", t):
-        cleaned = phrase.strip()
-        if cleaned and len(cleaned) < 60:
-            prefs.append(cleaned)
+    for cat_name, aliases in known_cats:
+        if any(re.search(r"\b" + re.escape(a) + r"\b", t) for a in aliases):
+            category = cat_name
+            break
+
+    if not category:
+        category_match = re.search(
+            r"(?:find|buy|want|need|looking for|best|recommend|suggest|get|show)\s+(?:an?\s+|the\s+)?(.+?)(?:\s+(?:under|below|within|for|with)\b|$)",
+            t,
+        )
+        if category_match:
+            words = re.sub(r"[^a-z0-9 -]", " ", category_match.group(1)).split()
+            category = " ".join(words[-2:]) or "product"
+        else:
+            category = "product"
+
+    # 3. Extract atomic feature tokens
+    hard_constraints = [f"price <= {budget}"] if budget else []
+    soft_preferences = []
+
+    ram = re.search(r"\b(\d{1,3}\s*GB)\s*(?:RAM)?\b", t, re.I)
+    if ram:
+        val = ram.group(1).upper().replace(" ", "")
+        hard_constraints.append(f"{val} RAM")
+    ssd = re.search(r"\b(\d{1,3}\s*(?:GB|TB))\s*(?:SSD|Storage)\b", t, re.I)
+    if ssd:
+        val = ssd.group(1).upper().replace(" ", "")
+        hard_constraints.append(f"{val} SSD")
+    hz = re.search(r"\b(\d{2,3}\s*Hz)\b", t, re.I)
+    if hz:
+        val = hz.group(1).upper().replace(" ", "")
+        hard_constraints.append(val)
+    screen = re.search(r"\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:inch|\"|\-inch)\b", t, re.I)
+    if screen:
+        hard_constraints.append(f"{screen.group(1)} inch")
+
+    # Keyword preferences
+    if re.search(r"\b(?:anc|noise\s*cancel\w*)\b", t):
+        soft_preferences.append("Active Noise Cancellation (ANC)")
+    if re.search(r"\b(?:battery|battery\s*life)\b", t):
+        soft_preferences.append("strong battery life")
+    if re.search(r"\b(?:camera|photography)\b", t):
+        soft_preferences.append("great camera quality")
+    if re.search(r"\b(?:fast\s*charging|quick\s*charge)\b", t):
+        soft_preferences.append("fast charging")
+    if re.search(r"\b(?:cushion\w*|comfort)\b", t):
+        soft_preferences.append("good cushioning")
+    if re.search(r"\b(?:adjustable\s*stand|pivot|height\s*adjustable)\b", t):
+        soft_preferences.append("adjustable stand")
+    if re.search(r"\b(?:coding|programming|python|machine\s*learning|ml)\b", t):
+        soft_preferences.append("coding and performance")
+    if re.search(r"\b(?:gaming)\b", t):
+        soft_preferences.append("gaming")
+    if re.search(r"\b(?:travel)\b", t):
+        soft_preferences.append("travel-friendly")
+    if re.search(r"\b(?:road\s*running|5k|daily\s*runs?)\b", t):
+        soft_preferences.append("road running")
+
+    # 4. Priority order
+    priorities = []
+    prio_match = re.search(r"prioritize\s+([^,;.]+)", t)
+    if prio_match:
+        prio_word = prio_match.group(1).strip()
+        priorities.append(prio_word)
+
+    for p in (hard_constraints[1:] + soft_preferences):
+        if p not in priorities:
+            priorities.append(p)
+    if budget:
+        priorities.append("price")
 
     return {
         "category": category,
         "budget_max": float(budget) if budget else None,
-        "use_case": "general use",
-        "hard_constraints": [f"price <= {budget}"] if budget else [],
-        "soft_preferences": prefs,
-        "priority_order": prefs + (["price"] if budget else []),
+        "use_case": f"{category} for {soft_preferences[0]}" if soft_preferences else category,
+        "hard_constraints": hard_constraints,
+        "soft_preferences": soft_preferences,
+        "priority_order": priorities,
         "brand_preference": "",
         "auto_purchase_limit": float(auto) if auto else None,
         "purchase_intent": "auto_buy" if auto else "recommend",
     }
-
 
 
 def extract_intent(user_goal: str) -> dict:
@@ -92,24 +162,28 @@ def extract_requirements(user_goal: str) -> dict:
 
 
 def build_search_query(requirements: dict, user_goal: str = "") -> str:
-    category = requirements.get("category") or "product"
+    category = str(requirements.get("category") or "product").strip()
     budget = requirements.get("budget_max")
     brand = requirements.get("brand_preference") or ""
-    prefs = [str(x) for x in requirements.get("soft_preferences", [])[:3] if len(str(x)) < 25 and not any(w in str(x).lower() for w in ("under", "price", "budget"))]
-
-    if user_goal and len(user_goal.strip()) <= 45:
-        return user_goal.strip()
+    
+    # Key specs from hard constraints
+    specs = [str(x) for x in requirements.get("hard_constraints", []) if not str(x).lower().startswith("price")][:2]
+    # Key prefs
+    prefs = [str(x) for x in requirements.get("soft_preferences", [])[:2] if len(str(x)) < 25 and not any(w in str(x).lower() for w in ("under", "price", "budget"))]
 
     query_parts = []
     if brand:
         query_parts.append(brand)
     query_parts.append(category)
-    if prefs:
-        query_parts.append(" ".join(prefs[:2]))
+    if specs:
+        query_parts.append(" ".join(specs))
+    elif prefs:
+        query_parts.append(" ".join(prefs[:1]))
     if budget:
         query_parts.append(f"under {int(budget)}")
 
     return " ".join(query_parts).strip()
+
 
 
 
