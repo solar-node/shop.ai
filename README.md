@@ -6,6 +6,14 @@ Unlike typical chatbots that summarize search results, shop.ai employs a **multi
 
 ---
 
+## 🚀 Live Demo & Deployment
+
+- **Frontend Application**: Deployed on Vercel at [https://shop-ai-beta.vercel.app/](https://shop-ai-beta.vercel.app/)
+- **Backend API**: Deployed on Render using Docker & FastAPI.
+- **Continuous Integration**: Managed via GitHub Actions with automatic Docker builds and deployments.
+
+---
+
 ## Key Features
 
 - **Multi-Agent Architecture (LangGraph)**: Stateful orchestration across 8 specialized nodes (Intent, Marketplace, Enrichment, Review, Evidence, Analyst, Recommendation, Risk, Purchase).
@@ -123,7 +131,9 @@ The judge assesses the complete state—`user_goal`, `requirements`, `selected_p
 - **Orchestration**: LangGraph, LangChain
 - **LLM Engine**: Google Gemini (Primary), Groq (Failover)
 - **Marketplace Data**: SerpAPI (Google Shopping & Immersive Product API)
-- **Backend & APIs**: Python, FastAPI
+- **Backend Framework**: Python, FastAPI
+- **Frontend Framework**: React / Vite / Tailwind
+- **Deployment & Hosting**: Docker, Vercel, Render
 - **Payments**: Razorpay SDK
 - **Database**: SQLite, SQLAlchemy
 - **Observability**: LangSmith
@@ -147,6 +157,7 @@ shop.ai/
 ├── frontend/            # React/Vite UI
 ├── scripts/             # End-to-end evaluation benchmark scripts
 ├── tests/               # Unit and pipeline tests
+├── Dockerfile           # Backend Docker configuration
 └── start.sh             # Launch script
 ```
 
@@ -186,3 +197,19 @@ shop.ai/
    python tests/test_pipeline.py
    python scripts/evaluate_system.py
    ```
+
+---
+
+## Deployment Instructions
+
+### Deploying the Backend (Render via Docker)
+The backend is fully containerized. To deploy to Render or any Docker-compatible hosting:
+1. Connect the repository to your Render dashboard.
+2. Select **Docker** as the deployment environment.
+3. Ensure the environment variables (`GEMINI_API_KEY`, `RAZORPAY_KEY_ID`, etc.) are securely added to the Render environment settings.
+
+### Deploying the Frontend (Vercel)
+1. Import the repository into Vercel.
+2. Set the **Root Directory** to `frontend/`.
+3. Vercel will automatically detect the React/Vite build settings (`npm run build`).
+4. Set the `VITE_API_BASE_URL` environment variable to point to your deployed Render backend URL.
