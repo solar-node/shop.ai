@@ -81,22 +81,25 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
                     extracted_specs = extract_product_specs(title, snippet=delivery_info, badge=badge)
 
                     results.append({
-                        "product_id":   f"serp_{abs(hash(title)) % 1000000}",
-                        "name":         title,
-                        "price":        price,
-                        "old_price":    old_price if (old_price and old_price > price) else None,
-                        "discount_pct": discount_pct if discount_pct > 0 else None,
-                        "image_url":    img,
-                        "rating":       rating,
-                        "review_count": reviews_count,
-                        "flipkart_url": item.get("link") or item.get("product_link", ""),
-                        "source":       source_name,
-                        "delivery":     delivery_info,
-                        "badge":        badge,
-                        "specs":        extracted_specs,
-                        "attributes":   extracted_specs,
-                        "availability": "in_stock",
-                        "available_qty": None,
+                        "product_id":                   f"serp_{abs(hash(title)) % 1000000}",
+                        "serpapi_product_id":           item.get("product_id"),
+                        "immersive_product_page_token": item.get("immersive_product_page_token"),
+                        "serpapi_immersive_product_api": item.get("serpapi_immersive_product_api"),
+                        "name":                         title,
+                        "price":                        price,
+                        "old_price":                    old_price if (old_price and old_price > price) else None,
+                        "discount_pct":                 discount_pct if discount_pct > 0 else None,
+                        "image_url":                    img,
+                        "rating":                       rating,
+                        "review_count":                 reviews_count,
+                        "flipkart_url":                 item.get("link") or item.get("product_link", ""),
+                        "source":                       source_name,
+                        "delivery":                     delivery_info,
+                        "badge":                        badge,
+                        "specs":                        extracted_specs,
+                        "attributes":                   extracted_specs,
+                        "availability":                 "in_stock",
+                        "available_qty":                None,
                     })
 
 
@@ -131,6 +134,91 @@ def scrape_live_products(query: str, max_price: float = 0, max_results: int = 6)
 
         except Exception as e:
             print(f"[Scraper] SerpAPI error: {e}")
+
+
+def enrich_candidate_details(candidates: list[dict], max_enrich: int = 4) -> list[dict]:
+    """Enriches top candidate products with detailed specifications and attributes
+    from SerpAPI Google Immersive Product API.
+    """
+    serp_key = os.environ.get("SERPAPI_KEY", "")
+    total_candidates = len(candidates)
+    with_tokens = sum(1 for c in candidates if c.get("immersive_product_page_token"))
+    requests_made = 0
+    successfully_enriched = 0
+    without_detail_data = 0
+
+    if not serp_key or not candidates:
+        print(f"[Product Detail Enrichment] Shopping Candidates: {total_candidates} | Detail Tokens: {with_tokens} | Requests Made: 0 | Successfully Enriched: 0 | Without Detail: {total_candidates}")
+        return candidates
+
+    enriched_list = []
+    for idx, c in enumerate(candidates):
+        token = c.get("immersive_product_page_token")
+        if idx < max_enrich and token:
+            requests_made += 1
+            try:
+                resp = requests.get(
+                    "https://serpapi.com/search.json",
+                    params={
+                        "engine": "google_immersive_product",
+                        "page_token": token,
+                        "api_key": serp_key,
+                    },
+                    timeout=12,
+                )
+                if resp.status_code == 200:
+                    prod_res = resp.json().get("product_results", {}) or {}
+                    about = prod_res.get("about_the_product", {}) or {}
+                    
+                    specs_list = about.get("specifications", []) or []
+                    features_list = about.get("features", []) or []
+                    all_items = specs_list + features_list
+
+                    detailed_specs = dict(c.get("specs") or {})
+                    detailed_attributes = dict(c.get("attributes") or {})
+
+                    for item in all_items:
+                        t = str(item.get("title") or "").strip()
+                        v = str(item.get("value") or "").strip()
+                        if t and v:
+                            norm_key = re.sub(r"[^a-zA-Z0-9_]", "_", t.lower().strip())
+                            norm_key = re.sub(r"_+", "_", norm_key).strip("_")
+                            detailed_specs[norm_key] = v
+                            detailed_attributes[t] = v
+
+                    # Extract store info & verified stock availability if available
+                    stores = prod_res.get("stores", []) or []
+                    if stores:
+                        for s in stores:
+                            offers = " ".join(s.get("details_and_offers", [])).lower()
+                            if "in stock" in offers:
+                                c["availability"] = "in_stock"
+                                break
+                            elif "out of stock" in offers or "unavailable" in offers or "sold out" in offers:
+                                c["availability"] = "out_of_stock"
+
+                    # Also capture description text into snippet/evidence
+                    desc = about.get("description") or ""
+                    if desc:
+                        c["description"] = desc
+                        c["snippet"] = (str(c.get("snippet") or "") + " " + desc).strip()
+
+                    c["specs"] = detailed_specs
+                    c["attributes"] = detailed_attributes
+                    successfully_enriched += 1
+                else:
+                    without_detail_data += 1
+            except Exception as exc:
+                print(f"[Product Detail Enrichment] Request failed for {c.get('name')[:30]}: {exc}")
+                without_detail_data += 1
+        else:
+            without_detail_data += 1
+
+        enriched_list.append(c)
+
+    print(f"[Product Detail Enrichment] Shopping Candidates: {total_candidates} | Detail Tokens: {with_tokens} | Requests Made: {requests_made} | Successfully Enriched: {successfully_enriched} | Without Detail: {without_detail_data}")
+    return enriched_list
+
 
 
     # ── 2. Fallback ScraperAPI (Amazon.in) ───────────────────────────────────

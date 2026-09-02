@@ -94,20 +94,24 @@ def intent_node(state: BudBuyState) -> dict:
 
 def marketplace_research_node(state: BudBuyState) -> dict:
     reqs = state.get("requirements", {})
-    stages = _set_stage(state, "research", "running")
     products = research_agent.find_candidates(reqs, state.get("user_goal", ""))
-    updates = {"marketplace_data": products, "stage_status": stages, "current_stage": "RESEARCH"}
+    updates = {"marketplace_data": products}
     state.update(updates)
     log_agent_activity(state, "MARKETPLACE_RESEARCH", "products_retrieved", {"count": len(products)})
     return updates
 
 
+
 def product_info_research_node(state: BudBuyState) -> dict:
-    result = product_info_agent.research_product_attributes(state.get("requirements", {}), state.get("user_goal", ""))
-    updates = {"product_info_data": result}
+    products = state.get("marketplace_data", [])
+    reqs = state.get("requirements", {})
+    goal = state.get("user_goal", "")
+    enriched_products, attr_plan = product_info_agent.enrich_and_plan_attributes(products, reqs, goal)
+    updates = {"marketplace_data": enriched_products, "product_info_data": attr_plan}
     state.update(updates)
-    log_agent_activity(state, "PRODUCT_INFO_RESEARCH", "attribute_plan_created", result)
+    log_agent_activity(state, "PRODUCT_INFO_RESEARCH", "products_enriched", {"count": len(enriched_products)})
     return updates
+
 
 
 def review_trust_research_node(state: BudBuyState) -> dict:
@@ -266,9 +270,8 @@ def build_graph():
         graph.add_node(name, node)
     graph.add_edge(START, "intent")
     graph.add_edge("intent", "marketplace_research")
-    graph.add_edge("intent", "product_info_research")
     graph.add_edge("intent", "review_trust_research")
-    graph.add_edge("marketplace_research", "evidence_synthesis")
+    graph.add_edge("marketplace_research", "product_info_research")
     graph.add_edge("product_info_research", "evidence_synthesis")
     graph.add_edge("review_trust_research", "evidence_synthesis")
     graph.add_edge("evidence_synthesis", "analyst")
@@ -278,6 +281,7 @@ def build_graph():
     graph.add_edge("approval", END)
     graph.add_edge("purchase", END)
     return graph.compile(checkpointer=MemorySaver())
+
 
 
 COMPILED_GRAPH = build_graph()

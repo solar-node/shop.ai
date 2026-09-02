@@ -37,3 +37,19 @@ def research_product_attributes(requirements: dict, user_goal: str) -> dict:
 
     return {"important_attributes": attrs, "evaluation_questions": [f"Does the product satisfy {a}?" for a in attrs]}
 
+
+def enrich_and_plan_attributes(marketplace_data: list, requirements: dict, user_goal: str) -> tuple[list, dict]:
+    """Enriches the top marketplace candidate products with deep specifications
+    and generates the attribute planning schema.
+    """
+    from app.integrations.product_scraper import enrich_candidate_details
+    
+    # 1. Deep specification enrichment on real candidates
+    enriched_products = enrich_candidate_details(marketplace_data, max_enrich=4) if marketplace_data else []
+    
+    # 2. Attribute dimension planning
+    plan = research_product_attributes(requirements, user_goal)
+    
+    return enriched_products, plan
+
+
