@@ -96,7 +96,7 @@ def synthesize_evidence(
         }
 
         # 3. Grounded requirement matching
-        matched, missing, feat_score = match_requirements_against_product(item, requirements, user_goal)
+        matched, contradicted, unknown, feat_score = match_requirements_against_product(item, requirements, user_goal)
         
         # Incorporate LLM matched requirements if supported by text
         llm_matched = [str(x).strip() for x in llm_item.get("matched_requirements", []) if str(x).strip()]
@@ -106,13 +106,15 @@ def synthesize_evidence(
 
         llm_missing = [str(x).strip() for x in llm_item.get("missing_requirements", []) if str(x).strip()]
         for mis in llm_missing:
-            if mis.lower() not in [x.lower() for x in missing] and mis.lower() not in [x.lower() for x in matched]:
-                missing.append(mis)
+            if mis.lower() not in [x.lower() for x in contradicted] and mis.lower() not in [x.lower() for x in matched]:
+                contradicted.append(mis)
 
         item["matched_requirements"] = matched
-        item["missing_requirements"] = missing
+        item["missing_requirements"] = contradicted
+        item["unknown_requirements"] = unknown
         item["feature_match_score"] = feat_score
         output.append(item)
+
 
     return output
 
