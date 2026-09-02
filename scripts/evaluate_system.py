@@ -21,8 +21,9 @@ if str(ROOT) not in sys.path:
 
 from app.commerce.ranking import _bayesian_quality_score, _price_value_score, _feature_match_score
 from app.commerce.policies import evaluate_purchase
-from app.agents.research_agent import _heuristic_fallback
+from app.agents.research_agent import extract_intent
 from app.agents.recommendation_agent import _differentiated_fallback_reasons
+
 from app.payments.razorpay_client import verify_payment_signature
 
 
@@ -177,8 +178,9 @@ class EvaluationBenchmark:
         ]
 
         for prompt, expected_cat, expected_budget in test_cases:
-            res = _heuristic_fallback(prompt)
+            res = extract_intent(prompt)
             cat_match = expected_cat.lower() in res.get("category", "").lower()
+
             budget_match = res.get("budget_max") == expected_budget
             cat_val = res.get('category', '')
             budget_val = res.get('budget_max', 0)
