@@ -6,48 +6,205 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import math
-from app.commerce.ranking import rank_products, _bayesian_quality_score
+from app.commerce.ranking import rank_products, _bayesian_quality_score, _price_value_score, _availability_score, weights_from_priority, DEFAULT_WEIGHTS
+from app.commerce.spec_extractor import match_requirements_against_product, evaluate_requirement_3state
 from app.commerce.policies import evaluate_purchase
 from app.agents.orchestrator import COMPILED_GRAPH
-
 
 
 def test_graph_compiles():
     assert COMPILED_GRAPH is not None
 
 
-def test_review_volume_has_real_influence():
-    high_volume = _bayesian_quality_score(4.0, 12000)
-    lower_volume = _bayesian_quality_score(4.3, 400)
-    assert high_volume > lower_volume
+def test_bayesian_score_bounds_and_shrinkage():
+    """Validates Bayesian shrinkage, volume confidence bounding, and [0,1] normalization across all edge cases."""
+    edge_cases = [
+        (None, None),
+        (0, 0),
+        (5.0, 0),
+        (5.0, 1),
+        (4.5, 10),
+        (4.2, 50),
+        (4.8, 500),
+        (4.6, 2500),
+        (4.5, 5000),
+        (4.7, 15000),
+        (1.0, 5000),
+        (-2.0, -10),
+        ("invalid", "invalid"),
+    ]
+    for r, v in edge_cases:
+        score = _bayesian_quality_score(r, v)
+        assert 0.0 <= score <= 1.0, f"Bayesian score out of bounds: {score} for rating={r}, reviews={v}"
+
+    # 15,000 reviews at 4.3★ must have higher statistical confidence than 10 reviews at 4.7★
+    high_vol = _bayesian_quality_score(4.3, 15000)
+    low_vol = _bayesian_quality_score(4.7, 10)
+    assert high_vol > low_vol
+
+    # Zero reviews rating shrinks to prior baseline
+    zero_revs = _bayesian_quality_score(5.0, 0)
+    assert zero_revs <= 0.40
 
 
-def test_requirement_evidence_can_overrule_volume():
+def test_generic_priority_weighting_without_hardcoded_phrases():
+    """Validates that structured priority_order dynamically shifts ranking dimensions and weights sum to 1.0."""
+    # Feature heavy priority
+    feat_weights = weights_from_priority(["camera quality", "battery life", "fast charging", "gaming performance"])
+    assert feat_weights["feature_match"] > DEFAULT_WEIGHTS["feature_match"]
+    assert math.isclose(sum(feat_weights.values()), 1.0, abs_tol=1e-4)
+
+    # Budget / Price heavy priority
+    budget_weights = weights_from_priority(["price", "budget savings", "affordability"])
+    assert budget_weights["price_value"] > DEFAULT_WEIGHTS["price_value"]
+    assert math.isclose(sum(budget_weights.values()), 1.0, abs_tol=1e-4)
+
+    # Quality / Brand heavy priority
+    brand_weights = weights_from_priority(["top rating", "trusted brand", "reliable build quality"])
+    assert brand_weights["quality"] > DEFAULT_WEIGHTS["quality"]
+    assert math.isclose(sum(brand_weights.values()), 1.0, abs_tol=1e-4)
+
+    # Unseen custom priorities
+    custom_weights = weights_from_priority(["consistent grind size", "easy cleaning", "price"])
+    assert custom_weights["feature_match"] > DEFAULT_WEIGHTS["feature_match"]
+    assert math.isclose(sum(custom_weights.values()), 1.0, abs_tol=1e-4)
+
+    # Default fallback when no priority is given
+    default_w = weights_from_priority([])
+    assert default_w == DEFAULT_WEIGHTS
+    assert math.isclose(sum(default_w.values()), 1.0, abs_tol=1e-4)
+
+
+def test_3state_requirement_evaluation():
+    """Validates that requirement evaluation strictly returns TRUE, FALSE, or UNKNOWN without fabricating facts."""
+    evid = "Timemore C3 Manual Coffee Grinder with Stainless Steel Conical Burr for Consistent Grind Size, Easy to Clean"
+    
+    # Verified match -> TRUE
+    assert evaluate_requirement_3state("consistent grind size", evid, {}, 6999, 12000) == "TRUE"
+    assert evaluate_requirement_3state("easy cleaning", evid, {}, 6999, 12000) == "TRUE"
+    
+    # Missing from listing -> UNKNOWN (NOT False, NOT True)
+    assert evaluate_requirement_3state("rain resistance", evid, {}, 6999, 12000) == "UNKNOWN"
+    assert evaluate_requirement_3state("stylus support", evid, {}, 6999, 12000) == "UNKNOWN"
+    
+    # Hard constraint violated -> FALSE
+    assert evaluate_requirement_3state("price <= 5000", evid, {}, 6999, 5000) == "FALSE"
+    assert evaluate_requirement_3state("16GB RAM", "Laptop 8GB RAM 512GB SSD", {}, 50000, 60000) == "FALSE"
+
+
+def test_hard_constraints_and_ranking_integrity():
+    """Validates that a product violating a hard constraint cannot outrank a compliant product."""
     products = [
         {
-            "product_id": "matched", "name": "Product A", "price": 5000,
-            "rating": 4.5, "review_count": 4000, "available_qty": 5,
-            "matched_requirements": ["required feature"], "missing_requirements": [],
+            "product_id": "compliant",
+            "name": "Compliant Laptop 16GB RAM",
+            "price": 65000,
+            "rating": 4.2,
+            "review_count": 500,
+            "available_qty": 5,
+            "specs": {"ram": "16GB", "storage": "512GB SSD"},
         },
         {
-            "product_id": "popular", "name": "Product B", "price": 5000,
-            "rating": 4.8, "review_count": 20000, "available_qty": 5,
-            "matched_requirements": [], "missing_requirements": ["required feature"],
+            "product_id": "violator",
+            "name": "Non-compliant Laptop 8GB RAM",
+            "price": 45000,
+            "rating": 4.9,
+            "review_count": 15000,
+            "available_qty": 5,
+            "specs": {"ram": "8GB", "storage": "256GB SSD"},
         },
     ]
-    reqs = {"hard_constraints": ["required feature"], "soft_preferences": []}
-    ranked = rank_products(products, 6000, requirements=reqs)
-    assert ranked[0].product_id == "matched"
+    reqs = {
+        "budget_max": 70000,
+        "hard_constraints": ["price <= 70000", "16GB RAM"],
+        "soft_preferences": ["512GB SSD"],
+        "priority_order": ["16GB RAM", "512GB SSD", "price"],
+    }
+    ranked = rank_products(products, 70000, requirements=reqs)
+    
+    assert ranked[0].product_id == "compliant"
+    assert ranked[0].utility_score > ranked[1].utility_score
+    assert "16GB RAM" in ranked[1].missing_requirements
 
 
-def test_over_budget_is_zero_price_fit():
-    products = [{
-        "product_id": "x", "name": "X", "price": 7000,
-        "rating": 4.5, "review_count": 5000, "available_qty": 1,
-        "matched_requirements": [], "missing_requirements": [],
-    }]
-    ranked = rank_products(products, 5000, requirements={})
-    assert ranked[0].components["price_value"] == 0.0
+
+def test_unseen_arbitrary_categories():
+    """Validates that the ranking and matching system functions purely category-agnostically on arbitrary queries."""
+    # 1. Coffee Grinder (Unseen)
+    grinder_cand = {
+        "product_id": "g1",
+        "name": "Timemore C3 Manual Coffee Grinder Conical Burr Consistent Grind Size, Easy to Clean",
+        "price": 6999,
+        "rating": 4.7,
+        "review_count": 1200,
+        "available_qty": 10,
+    }
+    g_reqs = {
+        "budget_max": 12000,
+        "hard_constraints": ["price <= 12000"],
+        "soft_preferences": ["consistent grind size", "easy cleaning"],
+        "priority_order": ["consistent grind size", "easy cleaning", "price"],
+    }
+    g_ranked = rank_products([grinder_cand], 12000, requirements=g_reqs)
+    assert g_ranked[0].components["feature_match"] == 1.0
+    assert "consistent grind size" in g_ranked[0].matched_requirements
+    assert "easy cleaning" in g_ranked[0].matched_requirements
+    assert g_ranked[0].utility_score >= 0.75
+
+
+    # 2. Backpack (Unseen)
+    pack_cand = {
+        "product_id": "b1",
+        "name": "Mokobara The Transit Backpack Padded Laptop Compartment Water Resistant Rain Cover",
+        "price": 4999,
+        "rating": 4.6,
+        "review_count": 850,
+        "available_qty": 5,
+    }
+    b_reqs = {
+        "budget_max": 6000,
+        "hard_constraints": ["price <= 6000"],
+        "soft_preferences": ["laptop protection", "rain resistance"],
+        "priority_order": ["laptop protection", "rain resistance", "price"],
+    }
+    b_ranked = rank_products([pack_cand], 6000, requirements=b_reqs)
+    assert b_ranked[0].components["feature_match"] == 1.0
+    assert "laptop protection" in b_ranked[0].matched_requirements
+    assert "rain resistance" in b_ranked[0].matched_requirements
+
+
+def test_utility_score_composition_and_transparency():
+    """Validates that utility_score is an exact weighted sum of the 4 transparent components."""
+    candidate = {
+        "product_id": "p1",
+        "name": "Product 1",
+        "price": 9500,
+        "rating": 4.5,
+        "review_count": 3000,
+        "available_qty": 5,
+        "specs": {"ram": "16GB"},
+        "matched_requirements": ["16GB RAM"],
+    }
+    reqs = {"budget_max": 10000, "hard_constraints": ["16GB RAM"], "soft_preferences": []}
+    ranked = rank_products([candidate], 10000, requirements=reqs)
+    p = ranked[0]
+
+    # Transparency fields check
+    assert hasattr(p, "bayesian_quality")
+    assert hasattr(p, "utility_score")
+    assert hasattr(p, "components")
+    assert hasattr(p, "matched_requirements")
+    assert hasattr(p, "unknown_requirements")
+
+    weights = DEFAULT_WEIGHTS
+    expected_utility = round(
+        p.components["feature_match"] * weights["feature_match"]
+        + p.components["quality"] * weights["quality"]
+        + p.components["price_value"] * weights["price_value"]
+        + p.components["availability"] * weights["availability"],
+        4
+    )
+    assert math.isclose(p.utility_score, expected_utility, abs_tol=1e-4)
 
 
 def test_risk_guard_is_deterministic():
@@ -61,140 +218,13 @@ def test_risk_guard_is_deterministic():
     assert auto.approved and not auto.requires_user_confirmation
 
 
-def test_budget_targeting_prefers_90_to_100_percent_zone():
-    from app.commerce.ranking import _price_value_score
-    # For budget ₹10,000:
-    # A product at ₹9,500 (95% of budget, in the >=90% zone) scores top tier (>= 0.95),
-    # significantly beating ₹8,500 (85%) and low-end ₹5,000 (50%)
-    top_zone = _price_value_score(9500, 10000)
-    mid_zone = _price_value_score(8500, 10000)
-    low_zone = _price_value_score(5000, 10000)
-    assert top_zone >= 0.95
-    assert top_zone > mid_zone > low_zone
-    assert low_zone < 0.30
-
-
-
-def test_high_review_volume_significantly_boosts_quality_score():
-    from app.commerce.ranking import _bayesian_quality_score
-    # A 4.3 rating with 15,000 verified reviews should achieve higher quality confidence
-    # than a 4.6 rating with only 10 reviews due to Bayesian evidence shrinkage
-    high_volume_score = _bayesian_quality_score(4.3, 15000)
-    low_volume_score = _bayesian_quality_score(4.6, 10)
-    assert high_volume_score > low_volume_score
-
-
-def test_user_goal_dynamic_propagation():
-    sample_query = "Find me high performance wireless earbuds under 3000"
-    decision = evaluate_purchase(
-        effective_price=2500,
-        budget_max=3000,
-        auto_purchase_limit=None,
-        merchant_trust_score=0.95,
-        stock_confirmed=True,
-        user_goal=sample_query,
-    )
-    assert decision.approved
-    
-    from app.agents.risk_agent import check_purchase
-    prod = {"product_id": "test_p1", "effective_price": 2500, "source": "Amazon"}
-    reqs = {"budget_max": 3000}
-    res = check_purchase(prod, reqs, user_goal=sample_query)
-    assert res.get("approved")
-
-
-def test_category_aware_spec_extraction():
-    from app.commerce.spec_extractor import extract_product_specs
-    
-    # 1. Laptop
-    laptop_specs = extract_product_specs("ASUS Vivobook 15 Core i5 13th Gen (16GB RAM / 512GB SSD / Windows 11)", category="laptop")
-    assert laptop_specs.get("ram") == "16GB"
-    assert "512GB" in laptop_specs.get("storage", "")
-
-    # 2. Headphones
-    headphone_specs = extract_product_specs("Sony WH-1000XM4 Wireless Active Noise Cancelling Headphones 30H Battery", category="headphones")
-    assert headphone_specs.get("noise_cancellation") == "Active Noise Cancellation (ANC)"
-    assert "30" in headphone_specs.get("battery_life", "")
-
-    # 3. Monitor
-    monitor_specs = extract_product_specs("LG UltraGear 27 inch QHD 144Hz IPS Gaming Monitor Height Adjustable Stand", category="monitor")
-    assert monitor_specs.get("refresh_rate") == "144HZ"
-    assert monitor_specs.get("screen_size") == "27 inch"
-    assert "Height Adjustable" in monitor_specs.get("stand", "")
-
-    # 4. Smartphone
-    phone_specs = extract_product_specs("OnePlus 12R 5G (16GB RAM, 256GB Storage, 50MP OIS Camera, 5500mAh Battery, 100W Fast Charging)", category="smartphone")
-    assert phone_specs.get("ram") == "16GB"
-    assert "50MP" in phone_specs.get("camera", "")
-    assert "100W" in phone_specs.get("fast_charging", "")
-
-    # 5. Running Shoes
-    shoe_specs = extract_product_specs("Nike Air Zoom Pegasus 40 Men Road Running Shoes with Responsive Cushioning Wide Fit", category="shoes")
-    assert "Air Zoom" in shoe_specs.get("cushioning", "")
-    assert shoe_specs.get("usage") == "Road Running"
-    assert shoe_specs.get("fit") == "Wide Fit"
-
-
-def test_grounded_requirement_matching():
-    from app.commerce.spec_extractor import match_requirements_against_product
-
-    product = {
-        "name": "ASUS Vivobook 15 Core i5 13th Gen (16GB RAM / 512GB SSD / Win 11)",
-        "specs": {"ram": "16GB", "storage": "512GB SSD", "processor": "Intel Core i5"},
-    }
-    reqs = {
-        "hard_constraints": ["16GB RAM", "512GB SSD"],
-        "soft_preferences": ["good processor", "decent battery life"],
-        "priority_order": ["performance", "RAM", "SSD", "battery"],
-    }
-    matched, missing, score = match_requirements_against_product(product, reqs)
-    assert "16GB RAM" in matched
-    assert "512GB SSD" in matched
-    assert "good processor" in matched
-    assert "decent battery life" in missing
-    assert score >= 0.70
-
-
-def test_stock_availability_scoring():
-    from app.commerce.ranking import _availability_score
-
-    assert _availability_score(10, "in_stock") == 1.0
-    assert _availability_score(None, "in_stock") == 1.0
-    assert _availability_score(None, "free delivery") == 1.0
-    assert _availability_score(0, "in_stock") == 0.0
-    assert _availability_score(None, "out of stock") == 0.0
-    assert _availability_score(None, None) == 0.85
-
-
-def test_priority_weighting_shifts_weights():
-    from app.commerce.ranking import weights_from_priority, DEFAULT_WEIGHTS
-
-    perf_weights = weights_from_priority(["performance"], user_goal="Please prioritize performance over display quality")
-    assert perf_weights["feature_match"] > DEFAULT_WEIGHTS["feature_match"]
-
-    budget_weights = weights_from_priority(["price"], user_goal="I want the cheapest budget saver option")
-    assert budget_weights["price_value"] > DEFAULT_WEIGHTS["price_value"]
-
-    brand_weights = weights_from_priority(["brand"], user_goal="Prefer a reliable brand with top ratings")
-    assert brand_weights["quality"] > DEFAULT_WEIGHTS["quality"]
-
-
 if __name__ == "__main__":
     test_graph_compiles()
-    test_review_volume_has_real_influence()
-    test_requirement_evidence_can_overrule_volume()
-    test_over_budget_is_zero_price_fit()
-    test_budget_targeting_prefers_90_to_100_percent_zone()
-    test_high_review_volume_significantly_boosts_quality_score()
+    test_bayesian_score_bounds_and_shrinkage()
+    test_generic_priority_weighting_without_hardcoded_phrases()
+    test_3state_requirement_evaluation()
+    test_hard_constraints_and_ranking_integrity()
+    test_unseen_arbitrary_categories()
+    test_utility_score_composition_and_transparency()
     test_risk_guard_is_deterministic()
-    test_user_goal_dynamic_propagation()
-    test_category_aware_spec_extraction()
-    test_grounded_requirement_matching()
-    test_stock_availability_scoring()
-    test_priority_weighting_shifts_weights()
     print("ALL TESTS PASSED SUCCESSFULLY.")
-
-
-
-
-

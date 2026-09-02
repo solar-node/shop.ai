@@ -1,105 +1,93 @@
-"""Category-aware specification extraction and evidence-grounded requirement matching engine.
-Extracts verified specifications and attributes from marketplace listing text, snippets,
-and badges without hardcoding product-specific values.
+"""Category-agnostic specification extraction and 3-state requirement matching engine.
+Performs deterministic, evidence-grounded matching against product text, snippets, and metadata
+without hardcoded product names, categories, or expected results.
 """
 import re
 from typing import Any, Dict, List, Tuple
 
+STOP_WORDS = {
+    "with", "for", "and", "the", "a", "an", "in", "of", "to", "under", "below",
+    "within", "good", "great", "strong", "best", "high", "top", "easy", "features",
+    "specs", "support", "regular", "daily", "preferred", "preference", "need", "want"
+}
+
+
+def stem(word: str) -> str:
+    """Minimal language-agnostic English stemmer for root matching."""
+    w = word.lower().strip()
+    for suffix in ("ing", "tion", "sion", "ment", "ness", "able", "ible", "ed", "es", "s", "er", "or", "ive", "ity", "y"):
+        if len(w) > len(suffix) + 3 and w.endswith(suffix):
+            return w[:-len(suffix)]
+    return w
+
+
+def matches_token(token: str, text: str) -> bool:
+    """Checks if token or its root stem is present in text."""
+    t_low = token.lower().strip()
+    if len(t_low) <= 1:
+        return False
+    if t_low in text:
+        return True
+    st = stem(t_low)
+    if len(st) >= 3 and st in text:
+        return True
+    return False
+
 
 def extract_product_specs(text: str, snippet: str = "", category: str = "", badge: str = "") -> Dict[str, Any]:
-    """Category-aware specification extraction from listing text and snippet."""
+    """Category-agnostic numerical and unit specification extraction from listing text."""
     specs = {}
     full_text = f" {text} {snippet} {badge} "
-    cat = (category or "").lower()
 
-    # 1. RAM / Memory (e.g. 16GB RAM, 8 GB DDR5, 32GB)
-    ram_match = re.search(r"\b(\d{1,3}\s*GB)\s*(?:RAM|DDR\d*|LPDDR\d*|Unified\s*Memory)?\b", full_text, re.I)
-    if ram_match:
-        specs["ram"] = ram_match.group(1).upper().replace(" ", "")
+    # 1. Capacity & Memory (GB, TB, MB, mAh)
+    for m in re.finditer(r"\b(\d{1,5})\s*(GB|TB|MB|mAh|L|ml|kg|g)\b", full_text, re.I):
+        val, unit = m.group(1), m.group(2).upper()
+        if unit in ("GB", "TB", "MB"):
+            if "RAM" in full_text[m.start()-5:m.end()+10].upper() or "DDR" in full_text[m.start()-5:m.end()+10].upper():
+                specs["ram"] = f"{val}{unit}"
+            elif "SSD" in full_text[m.start()-5:m.end()+10].upper() or "STORAGE" in full_text[m.start()-5:m.end()+10].upper() or "ROM" in full_text[m.start()-5:m.end()+10].upper():
+                specs["storage"] = f"{val}{unit}"
+            elif "ram" not in specs:
+                specs["ram"] = f"{val}{unit}"
+            elif "storage" not in specs and f"{val}{unit}" != specs.get("ram"):
+                specs["storage"] = f"{val}{unit}"
+        elif unit == "MAH":
+            specs["battery_capacity"] = f"{val}mAh"
+        else:
+            specs[unit.lower()] = f"{val} {unit}"
 
-    # 2. Storage / SSD / ROM (e.g. 512GB SSD, 1TB SSD, 256GB Storage)
-    ssd_match = re.search(r"\b(\d{1,3}\s*(?:GB|TB))\s*(?:SSD|NVMe|PCIe|ROM|Storage|UFS\s*[\d.]*)\b", full_text, re.I)
-    if ssd_match:
-        specs["storage"] = ssd_match.group(1).upper().replace(" ", "") + " SSD"
-    else:
-        all_gb = re.findall(r"\b(\d{2,4}\s*(?:GB|TB))\b", full_text, re.I)
-        if len(all_gb) >= 2 and (specs.get("ram") is None or all_gb[1].upper().replace(" ", "") != specs.get("ram")):
-            specs["storage"] = all_gb[1].upper().replace(" ", "") + " Storage"
+    # 2. Frequencies & Power (Hz, W, bar, RPM)
+    for m in re.finditer(r"\b(\d{1,4})\s*(Hz|W|bar|RPM|V|kW)\b", full_text, re.I):
+        val, unit = m.group(1), m.group(2)
+        specs[unit.lower()] = f"{val}{unit}"
 
-    # 3. Processors / CPU / Chipset
-    cpu_match = re.search(
-        r"\b((?:Intel\s+(?:Core\s+)?)?i[3579]-?\d{4,5}\w*|Intel\s+Core\s+i[3579]|AMD\s+Ryzen\s+[3579][\w\s-]*|Apple\s+M[1234][\w\s]*|Snapdragon\s+[\w\s+]+|Dimensity\s+\d+[\w+]*|MediaTek\s+[\w\s+]+|Exynos\s+\d+|Google\s+Tensor\s+G\d*)\b",
-        full_text,
-        re.I,
-    )
-    if cpu_match:
-        specs["processor"] = cpu_match.group(1).strip()
+    # 3. Sizes & Dimensions (inch, ", cm, mm)
+    size_match = re.search(r"(\b\d{1,2}(?:\.\d{1,2})?)\s*(?:inch|\"|cm|\-inch)\b", full_text, re.I)
+    if size_match:
+        specs["screen_size"] = f"{size_match.group(1)} inch"
 
-    # 4. Dedicated / Integrated GPU
-    gpu_match = re.search(r"\b(RTX\s*\d{4}[\w\s]*|GTX\s*\d{4}[\w\s]*|Radeon\s*[\w\s]+|Iris\s*X[ee]|GeForce\s*[\w\s]+)\b", full_text, re.I)
-    if gpu_match:
-        specs["gpu"] = gpu_match.group(1).strip()
-
-    # 5. Refresh Rate & Display (Monitors / Laptops / Phones)
-    hz_match = re.search(r"\b(\d{2,3}\s*Hz)\b", full_text, re.I)
-    if hz_match:
-        specs["refresh_rate"] = hz_match.group(1).replace(" ", "").upper()
-
+    # 4. Camera & Optical (MP, 4K, 1080p, 1440p, QHD, FHD)
+    cam_match = re.search(r"(\b\d{2,3}\s*MP)\b", full_text, re.I)
+    if cam_match:
+        specs["camera"] = cam_match.group(1).replace(" ", "")
     res_match = re.search(r"\b(1440p|1080p|2K|4K|QHD|WQHD|FHD|UHD|Retina|AMOLED|OLED|IPS)\b", full_text, re.I)
     if res_match:
         specs["resolution"] = res_match.group(1).upper()
 
-    size_match = re.search(r"\b(\d{1,2}(?:\.\d{1,2})?)\s*(?:inch|\"|cm|\-inch)\b", full_text, re.I)
-    if size_match:
-        specs["screen_size"] = f"{size_match.group(1)} inch"
-
-    # 6. Audio / Headphones: ANC / Battery / Drivers
-    if re.search(r"\b(?:active\s+noise\s+cancel\w*|anc|enc|noise\s+isolat\w*)\b", full_text, re.I):
-        specs["noise_cancellation"] = "Active Noise Cancellation (ANC)"
-
-    bat_hrs = re.search(r"\b(\d{1,3}\s*(?:Hours?|Hrs?|H))\s*(?:Playtime|Battery|Playback)?\b", full_text, re.I)
-    if bat_hrs:
-        specs["battery_life"] = bat_hrs.group(1).strip()
-
-    driver_match = re.search(r"\b(\d{1,2}\s*mm)\s*(?:Drivers?|dynamic\s*drivers?)?\b", full_text, re.I)
-    if driver_match:
-        specs["driver_size"] = driver_match.group(1).replace(" ", "")
-
-    # 7. Smartphone Camera / Battery / Fast Charging
-    cam_match = re.search(r"\b(\d{2,3}\s*MP)\s*(?:Camera|OIS|Triple|Quad|Dual)?\b", full_text, re.I)
-    if cam_match:
-        specs["camera"] = cam_match.group(1).replace(" ", "") + (" OIS" if "ois" in full_text.lower() else " Camera")
-
-    charge_match = re.search(r"\b(\d{2,3}\s*W)\s*(?:Fast\s+Charging|Charging|FlashCharge|SuperVOOC)?\b", full_text, re.I)
-    if charge_match:
-        specs["fast_charging"] = charge_match.group(1).replace(" ", "") + " Fast Charging"
-
-    bat_mah = re.search(r"\b(\d{4,5}\s*mAh)\b", full_text, re.I)
-    if bat_mah:
-        specs["battery_capacity"] = bat_mah.group(1).replace(" ", "")
-
-    # 8. Monitor Ergonomics & Stand
-    if re.search(r"\b(Height\s*Adjustable|Adjustable\s*Stand|Pivot|Swivel|Tilt)\b", full_text, re.I):
-        specs["stand"] = "Height Adjustable Stand"
-
-    # 9. Footwear & Shoes
-    cushion = re.search(r"\b(Air\s*Zoom|Gel|Boost|Nitro|Cloud|Floatride|EVA|React|FlyteFoam|Fresh\s*Foam)\b", full_text, re.I)
-    if cushion:
-        specs["cushioning"] = cushion.group(1).title() + " Cushioning"
-    if re.search(r"\b(Road\s*Running|Trail\s*Running|Walking|Racing|Training)\b", full_text, re.I):
-        specs["usage"] = re.search(r"\b(Road\s*Running|Trail\s*Running|Walking|Racing|Training)\b", full_text, re.I).group(1).title()
-    if re.search(r"\b(Wide\s*(?:Fit|Toe)?|Extra\s*Wide)\b", full_text, re.I):
-        specs["fit"] = "Wide Fit"
+    # 5. Generic Entity Extraction (terms in parentheses or separated by commas/dashes)
+    entities = [x.strip() for x in re.split(r"[,/|()]", text) if len(x.strip()) > 3 and len(x.strip()) < 40]
+    if entities:
+        specs["features"] = entities[:5]
 
     return specs
 
 
 def _clean_and_dedup_requirements(req_list: List[str]) -> List[str]:
-    """Cleans and deduplicates requirement phrases semantically."""
+    """Cleans and deduplicates requirements while preserving order."""
     cleaned = []
     for r in req_list:
         r_str = str(r).strip()
-        if not r_str or r_str.lower().startswith("price"):
+        if not r_str:
             continue
         r_low = r_str.lower()
         if any(r_low == c.lower() or (r_low in c.lower() and len(r_low) < len(c.lower())) for c in cleaned):
@@ -108,26 +96,110 @@ def _clean_and_dedup_requirements(req_list: List[str]) -> List[str]:
     return cleaned
 
 
+def evaluate_requirement_3state(
+    req: str,
+    evidence_text: str,
+    specs: Dict[str, Any],
+    price: float,
+    budget_max: float,
+) -> str:
+    """Evaluates a single requirement against product evidence into 3 states:
+    - TRUE: verified match supported by evidence
+    - FALSE: contradicted by evidence (e.g. price > budget or spec < requirement)
+    - UNKNOWN: evidence unavailable / unmentioned in listing
+    """
+    r_low = req.lower().strip()
+    e_low = (evidence_text + " " + " ".join(str(v) for v in specs.values())).lower()
+
+    # 1. Price constraint check
+    if "price" in r_low or "<=" in r_low or "under" in r_low or "below" in r_low:
+        digits = re.findall(r"\d+", r_low)
+        if digits:
+            target_max = float(digits[0])
+            if price > 0:
+                return "TRUE" if price <= target_max else "FALSE"
+        return "UNKNOWN"
+
+    # 2. Check numerical spec requirements
+    # RAM
+    ram_req = re.search(r"(\d+)\s*gb\s*ram", r_low)
+    if ram_req:
+        target_ram = int(ram_req.group(1))
+        prod_ram = re.search(r"(\d+)\s*gb\s*(?:ram|ddr|lpddr)?", e_low)
+        if prod_ram:
+            return "TRUE" if int(prod_ram.group(1)) >= target_ram else "FALSE"
+        return "UNKNOWN"
+
+    # Storage / SSD
+    ssd_req = re.search(r"(\d+)\s*(?:gb|tb)\s*ssd", r_low)
+    if ssd_req:
+        target_ssd = int(ssd_req.group(1))
+        prod_ssd = re.search(r"(\d+)\s*(?:gb|tb)\s*ssd", e_low)
+        if prod_ssd:
+            return "TRUE" if int(prod_ssd.group(1)) >= target_ssd else "FALSE"
+        return "UNKNOWN"
+
+    # Refresh Rate
+    hz_req = re.search(r"(\d+)\s*hz", r_low)
+    if hz_req:
+        target_hz = int(hz_req.group(1))
+        prod_hz = re.search(r"(\d+)\s*hz", e_low)
+        if prod_hz:
+            return "TRUE" if int(prod_hz.group(1)) >= target_hz else "FALSE"
+        return "UNKNOWN"
+
+    # Screen Size
+    inch_req = re.search(r"(\d+(?:\.\d+)?)\s*(?:inch|\"|\-inch)", r_low)
+    if inch_req:
+        target_inch = float(inch_req.group(1))
+        prod_inch = re.search(r"(\d+(?:\.\d+)?)\s*(?:inch|\"|\-inch)", e_low)
+        if prod_inch:
+            return "TRUE" if abs(float(prod_inch.group(1)) - target_inch) <= 0.5 else "FALSE"
+        return "UNKNOWN"
+
+    # 3. Direct substring match
+    if r_low in e_low:
+        return "TRUE"
+
+    # 4. Token & Semantic Stem matching
+    words = re.findall(r"[a-zA-Z0-9]+", r_low)
+    meaningful_tokens = [w for w in words if w not in STOP_WORDS and len(w) > 1]
+    if not meaningful_tokens:
+        return "UNKNOWN"
+
+    matched_tokens = [t for t in meaningful_tokens if matches_token(t, e_low)]
+    
+    if len(meaningful_tokens) == 1:
+        return "TRUE" if len(matched_tokens) == 1 else "UNKNOWN"
+    
+    # If >= 50% of core tokens match the evidence
+    if len(matched_tokens) >= max(1, len(meaningful_tokens) * 0.5):
+        return "TRUE"
+
+    return "UNKNOWN"
+
+
 def match_requirements_against_product(
     product: Dict[str, Any],
     requirements: Dict[str, Any],
     user_goal: str = "",
-) -> Tuple[List[str], List[str], float]:
-    """Matches extracted user requirements against verified product evidence.
+) -> Tuple[List[str], List[str], List[str], float]:
+    """Matches user requirements against actual product evidence using 3-state evaluation.
 
     Returns:
-        (matched_requirements, missing_requirements, feature_match_score)
+        (matched_requirements, contradicted_requirements, unknown_requirements, feature_match_score)
     """
     specs = product.get("specs") or {}
     name = str(product.get("name") or "")
     snippet = str(product.get("snippet") or "")
     badge = str(product.get("badge") or "")
     source = str(product.get("source") or product.get("seller") or "")
-    
+    price = float(product.get("price") or product.get("effective_price") or 0)
+    budget_max = float(requirements.get("budget_max") or 0)
+
     raw_matched = [str(x).strip().lower() for x in product.get("matched_requirements", []) if str(x).strip()]
     raw_missing = [str(x).strip().lower() for x in product.get("missing_requirements", []) if str(x).strip()]
 
-    # Combined textual evidence
     evidence_text = f" {name} {snippet} {badge} {source} " + " ".join(str(v) for v in specs.values()) + " " + " ".join(raw_matched)
     evidence_lower = evidence_text.lower()
 
@@ -139,95 +211,52 @@ def match_requirements_against_product(
     all_reqs = _clean_and_dedup_requirements(hard_constraints + priority_order + soft_preferences)
 
     if not all_reqs and not brand_pref:
-        return (list(product.get("matched_requirements", [])), list(product.get("missing_requirements", [])), 0.85)
+        return (list(product.get("matched_requirements", [])), [], [], 0.85)
 
     matched = []
-    missing = []
+    contradicted = []
+    unknown = []
     hard_violations = 0
 
-    def _is_matched(req: str) -> bool:
-        r_low = req.lower()
-
-        # Check pre-labeled raw_matched / raw_missing
-        if any(r_low == m or r_low in m or m in r_low for m in raw_matched):
-            return True
-        if any(r_low == m or r_low in m or m in r_low for m in raw_missing):
-            return False
-
-        if r_low in evidence_lower:
-            return True
-
-        # Numerical spec matching
-        digits = re.findall(r"\d+", r_low)
-        if digits:
-            num = digits[0]
-            if "gb" in r_low and "ram" in r_low:
-                spec_ram = specs.get("ram", "")
-                return bool(spec_ram and num in spec_ram)
-            if "gb" in r_low or "ssd" in r_low or "tb" in r_low:
-                spec_storage = specs.get("storage", "")
-                return bool(spec_storage and num in spec_storage)
-            if "hz" in r_low:
-                spec_hz = specs.get("refresh_rate", "")
-                return bool(spec_hz and num in spec_hz)
-            if "inch" in r_low or '"' in r_low:
-                spec_size = specs.get("screen_size", "")
-                return bool(spec_size and num in spec_size)
-            if "mp" in r_low:
-                spec_cam = specs.get("camera", "")
-                return bool(spec_cam and num in spec_cam)
-            if "w" in r_low and "charging" in r_low:
-                spec_charge = specs.get("fast_charging", "")
-                return bool(spec_charge and num in spec_charge)
-
-        # Keyword concept matching using word boundaries
-        if re.search(r"\b(?:anc|enc|noise\s*cancel\w*)\b", r_low):
-            return bool("noise_cancellation" in specs or re.search(r"\b(?:anc|enc|noise\s*cancel\w*)\b", evidence_lower))
-        if re.search(r"\b(?:cushion\w*|comfort\w*)\b", r_low):
-            return bool("cushioning" in specs or re.search(r"\b(?:cushion\w*|zoom|gel|boost|nitro|comfort|soft)\b", evidence_lower))
-        if re.search(r"\b(?:processor|cpu|performance|fast|compute|coding|work)\b", r_low):
-            return bool("processor" in specs or any(w in evidence_lower for w in ("intel", "core", "ryzen", "m2", "m3", "snapdragon", "dimensity", "octa-core", "processor", "cpu", "performance")))
-        if re.search(r"\b(?:adjustable|stand|ergonomic|pivot|swivel|height)\b", r_low):
-            return bool("stand" in specs or re.search(r"\b(?:adjustable|height|pivot|swivel)\b", evidence_lower))
-        if re.search(r"\b(?:battery|battery\s*life|backup)\b", r_low):
-            return bool("battery_life" in specs or "battery_capacity" in specs or "battery" in evidence_lower)
-        if re.search(r"\b(?:camera|photography|low-light|photo)\b", r_low):
-            return bool("camera" in specs or re.search(r"\b(?:camera|mp|ois|lens|photo)\b", evidence_lower))
-        if re.search(r"\b(?:road|road\s*run\w*)\b", r_low):
-            return bool(specs.get("usage") == "Road Running" or "road" in evidence_lower)
-        if re.search(r"\b(?:wide|wide\s*fit)\b", r_low):
-            return bool("fit" in specs or "wide" in evidence_lower)
-
-        return False
-
+    # 1. Hard Constraints Evaluation
     for hc in hard_constraints:
-        if _is_matched(hc):
+        state = evaluate_requirement_3state(hc, evidence_lower, specs, price, budget_max)
+        if state == "TRUE":
             matched.append(hc)
-        else:
-            missing.append(hc)
+        elif state == "FALSE":
+            contradicted.append(hc)
             hard_violations += 1
+        else:
+            unknown.append(hc)
 
+    # 2. Soft Preferences & Priorities Evaluation
     for req in all_reqs:
         if req in hard_constraints:
             continue
-        if _is_matched(req):
+        state = evaluate_requirement_3state(req, evidence_lower, specs, price, budget_max)
+        if state == "TRUE":
             matched.append(req)
+        elif state == "FALSE":
+            contradicted.append(req)
         else:
-            missing.append(req)
+            unknown.append(req)
 
+    # 3. Brand Preference Evaluation
     brand_bonus = 0.0
     if brand_pref:
         if brand_pref in evidence_lower:
             brand_bonus = 0.10
             matched.append(f"Brand: {brand_pref.title()}")
         else:
-            missing.append(f"Brand: {brand_pref.title()}")
+            unknown.append(f"Brand: {brand_pref.title()}")
 
+    # 4. Priority-Weighted Score Calculation
     total_weights = 0.0
     matched_weights = 0.0
 
     for i, req in enumerate(all_reqs):
-        weight = max(1.0, 2.5 - (i * 0.35))
+        # Decreasing positional weight for earlier items in priority list
+        weight = max(1.0, 3.0 - (i * 0.40))
         total_weights += weight
         if req in matched:
             matched_weights += weight
@@ -235,7 +264,8 @@ def match_requirements_against_product(
     raw_score = (matched_weights / total_weights) if total_weights > 0 else 0.85
     score = raw_score + brand_bonus
 
+    # Apply strict hard constraint penalty
     if hard_violations > 0:
-        score = score * (0.35 ** hard_violations)
+        score = 0.0 if any(hc in contradicted for hc in hard_constraints if "price" in hc.lower()) else (score * (0.25 ** hard_violations))
 
-    return (matched, missing, round(min(max(score, 0.0), 1.0), 4))
+    return (matched, contradicted, unknown, round(min(max(score, 0.0), 1.0), 4))

@@ -150,13 +150,23 @@ def analyst_node(state: BudBuyState) -> dict:
     candidates = []
     for i, item in enumerate(ranked, 1):
         raw = lookup.get(str(item.product_id), {})
-        candidates.append({**raw, "utility_score": item.utility_score, "rank": i, "components": item.components})
+        candidates.append({
+            **raw,
+            "utility_score": item.utility_score,
+            "bayesian_quality": item.bayesian_quality,
+            "rank": i,
+            "components": item.components,
+            "matched_requirements": item.matched_requirements,
+            "missing_requirements": item.missing_requirements,
+            "unknown_requirements": item.unknown_requirements,
+        })
     stages = _set_stage(state, "analyst", "completed")
     stages["evaluation"] = "running"
     updates = {"candidates": candidates, "stage_status": stages, "current_stage": "EVALUATION", "status": "ANALYZING"}
     state.update(updates)
     log_agent_activity(state, "ANALYST", "products_ranked", {"count": len(candidates), "top": candidates[0].get("name") if candidates else None})
     return updates
+
 
 
 def recommendation_node(state: BudBuyState) -> dict:
