@@ -1,267 +1,188 @@
-# shop.ai — Autonomous Multi-Agent Shopping Assistant
+# shop.ai — Multi-Agent Autonomous Commerce System
 
+**shop.ai** is an advanced, multi-agent autonomous shopping system built with **LangGraph**. It acts as a category-agnostic personal shopper that translates natural-language goals into structured intent, scours live marketplaces via SerpAPI, enriches product evidence, deterministically ranks options based on utility math, and seamlessly executes secure, idempotent purchases via Razorpay.
 
-shop.ai is an AI-native shopping agent that turns a natural-language shopping goal into a researched, evidence-backed and policy-checked purchase.
+Unlike typical chatbots that summarize search results, shop.ai employs a **multi-stage analytical pipeline** with dedicated agents for intent planning, risk gating, deterministic ranking, and human-in-the-loop purchase approvals.
 
+---
 
-The architecture is intentionally **category-extensible**: the LLM decides what the user wants and which attributes matter instead of maintaining a growing list of product categories and specifications in Python.
+## Key Features
 
-## Architecture
+- **Multi-Agent Architecture (LangGraph)**: Stateful orchestration across 8 specialized nodes (Intent, Marketplace, Enrichment, Review, Evidence, Analyst, Recommendation, Risk, Purchase).
+- **Resilient Multi-Provider Fallback**: Robust LLM failover. If the primary provider (Gemini) hits rate limits or errors, the system automatically falls back to Groq for structured JSON generation, ensuring zero data loss and strict intent preservation.
+- **Evidence-Grounded Spec Matching**: Uses SerpAPI's Google Immersive Product API to retrieve deep attributes, matching them against explicit user requirements without hallucinating unstated features.
+- **Deterministic Product Ranking**: A predictable, mathematical ranking engine utilizing Bayesian quality scores and 4-component utility math (Quality, Price Value, Feature Match, Availability) rather than leaving ranking to opaque LLM generation.
+- **Secure Purchases**: Cryptographically verified Razorpay payment integration with idempotent checkout sessions, risk gating, and Human-in-the-Loop (HITL) approval flows.
+- **Deep Observability**: Fully integrated with LangSmith for precise step-level tracing and evaluation.
 
-```text
-                         USER SHOPPING GOAL
-                                  │
-                                  ▼
-                    ┌────────────────────────┐
-                    │ Intent / Shopping      │
-                    │ Planner — LLM          │
-                    └────────────┬───────────┘
-                                 │
-                 ┌───────────────┼───────────────┐
-                 ▼               ▼               ▼
-        Marketplace         Product Info      Review / Trust
-        Research            Research           Research
-        Tool/API            LLM                Python
-                 └───────────────┬───────────────┘
-                                 ▼
-                    ┌────────────────────────┐
-                    │ Evidence Synthesis      │
-                    │ LLM                     │
-                    └────────────┬───────────┘
-                                 ▼
-                    ┌────────────────────────┐
-                    │ Product Analyst         │
-                    │ Deterministic Python    │
-                    │ Bayesian Ranking        │
-                    └────────────┬───────────┘
-                                 ▼
-                    ┌────────────────────────┐
-                    │ Recommendation LLM      │
-                    │ WHY THIS PRODUCT?       │
-                    └────────────┬───────────┘
-                                 ▼
-                    ┌────────────────────────┐
-                    │ Risk Guard              │
-                    │ Deterministic Python    │
-                    └────────────┬───────────┘
-                                 ▼
-                              Approval?
-                             /         \
-                           YES          AUTO
-                            │             │
-                            └──────┬──────┘
-                                   ▼
-                            Purchase Agent
-                                   │
-                                Razorpay
+---
+
+## System Architecture
+
+The core of shop.ai is a state machine built with LangGraph. 
+
+```mermaid
+graph TD
+    START((START)) --> intent[Intent / Shopping Planner]
+    
+    intent --> mr[Marketplace Research]
+    intent --> rr[Review / Trust Research]
+    
+    mr --> pr[Product Detail Enrichment]
+    pr --> es[Evidence Synthesis]
+    rr --> es
+    
+    es --> analyst[Analyst / Deterministic Ranking]
+    analyst --> rec[Recommendation Agent]
+    
+    rec --> risk[Risk / Policy Gate]
+    
+    risk -- "Requires Confirmation" --> approval[Human Approval]
+    risk -- "Auto-Buy Approved" --> purchase[Purchase / Razorpay]
+    risk -- "Rejected" --> END((END))
+    
+    approval --> END
+    purchase --> END
 ```
 
-### Why this split?
+### Multi-Agent Components
 
-- **LLMs** handle natural language, category understanding, attribute discovery, evidence synthesis and explanations.
-- **Python** handles arithmetic, ranking, inventory, financial policy and payment verification.
-- The LLM is never allowed to change the deterministic ranking or bypass the Risk Guard.
+1. **Intent Extraction & Provider Fallback (`intent_node`)**
+   - Parses the natural language `user_goal` into a structured, category-agnostic JSON schema (budget, use case, hard constraints, soft preferences, priorities).
+   - *Architecture Note:* Implements a strict failover from **Gemini → Groq → Explicit Failure**. The Groq fallback receives the full original `user_goal` to ensure explicit requirements (like 16GB RAM, OIS) are preserved, completely replacing older brittle regex heuristics.
+   
+2. **Marketplace Discovery (`marketplace_research_node`)**
+   - Generates natural, retrieval-friendly search queries (e.g., `laptop 16GB RAM 512GB SSD under 70000`).
+   - Queries live Google Shopping data via SerpAPI to collect broad candidate lists.
 
-### Parallel research
+3. **Product Detail Enrichment (`product_info_research_node`)**
+   - Extracts the `immersive_product_page_token` from broad search results and queries the SerpAPI Immersive Product API for deep technical specifications, avoiding hallucinations.
 
-After intent extraction, three independent branches execute concurrently in LangGraph:
+4. **Review & Trust Research (`review_trust_research_node`)**
+   - Establishes category-level baselines for Bayesian rating calculations and merchant trust signals.
 
-1. **Marketplace Research** — retrieves live listings and factual marketplace fields.
-2. **Product Info Research** — an LLM determines which attributes are important for the current request.
-3. **Review/Trust Research** — prepares the statistical review-evidence model.
+5. **Evidence Synthesis (`evidence_synthesis_node`)**
+   - Evaluates the deep product specifications against the structured user intent, creating a three-state matching matrix for every product (`matched_requirements`, `missing_requirements`, `unknown_requirements`).
 
-The branches join at **Evidence Synthesis**, where an LLM combines their outputs into normalized product evidence.
+6. **Deterministic Analyst (`analyst_node`)**
+   - Scores candidates using a 4-component utility equation rather than asking an LLM to rank them.
+   - Calculates Bayesian average quality, applies dynamically calculated priority weights, and yields a ranked list.
 
-## Ranking
+7. **Recommendation Engine (`recommendation_node`)**
+   - Synthesizes the deterministic evidence into an explainable "Why This Product?" summary, explicitly addressing trade-offs.
 
-The Product Analyst uses deterministic Bayesian review evidence rather than asking an LLM to choose the winner.
+8. **Risk & Purchase Flow (`risk_node`, `approval_node`, `purchase_node`)**
+   - Gates the purchase based on safety policies.
+   - Generates idempotent Razorpay orders, securely verifying HMAC-SHA256 signatures upon payment completion.
 
-For rating `R` and review count `v`:
+---
 
-```text
-Adjusted rating = (v × R + m × C) / (v + m)
-```
+## Evaluation Methodology
 
-where `m = 150` and `C = 3.8`.
+The system's end-to-end performance is evaluated using an LLM-as-a-judge framework, ensuring rigorous assessment against the **original user request**, not just the search results.
 
-Review-volume confidence is logarithmically scaled so evidence volume matters strongly without allowing review count alone to dominate product fit.
+**The Evaluator Schema:**
+The judge assesses the complete state—`user_goal`, `requirements`, `selected_product`, `candidates`, `evidence`, and `final_response`—across 8 strict dimensions on a 0–100 scale:
 
-The final utility combines:
+1. **Goal Achievement**: Did it find the right category and price?
+2. **Requirement Adherence**: Were hard constraints and soft preferences strictly obeyed?
+3. **Recommendation Quality**: How well does the product match the user's priorities?
+4. **Evidence Grounding**: Are claims supported by actual scraped evidence?
+5. **Reasoning and Synthesis**: Is the internal justification sound?
+6. **Safety and Purchase Correctness**: Is the checkout gated appropriately?
+7. **Usefulness and Actionability**: How helpful is the final response?
+8. **Overall Quality**: The holistic score for the shopping experience.
 
-```text
-45% quality/evidence
-35% requirement match
-10% price fit
-10% availability
-```
+### Evaluation Results (5 Diverse Categories)
 
-Requirement matching is based on the **LLM-normalized evidence** rather than category-specific Python rules.
+| Category | Goal Achievement | Requirement Adherence | Recommendation Quality | Evidence Grounding | Reasoning & Synthesis | Safety / Purchase | Usefulness | Overall Quality |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Laptop** | 100 | 100 | 95 | 100 | 95 | 100 | 90 | **95.0** |
+| **Earbuds** | 100 | 100 | 100 | 95 | 95 | 100 | 80 | **92.0** |
+| **Monitor** | 85 | 75 | 85 | 100 | 80 | 100 | 85 | **82.0** |
+| **Smartphone** | 100 | 100 | 100 | 100 | 95 | 100 | 100 | **98.0** |
+| **Running Shoes**| 85 | 95 | 65 | 100 | 60 | 100 | 50 | **68.0** |
+| *AVERAGE* | *94.0* | *94.0* | *89.0* | *99.0* | *85.0* | *100.0* | *81.0* | *87.0* |
 
-## Grounded recommendations
+*(Note: These are qualitative evaluator ratings out of 100, not classification accuracy percentages).*
 
-The Recommendation Agent receives the ranked candidate plus the evidence used to evaluate it. It produces:
+#### Strengths Identified
+- **Evidence-Grounded Recommendations (Avg 99)**: The system excels at ensuring that recommendations are strictly supported by retrieved evidence without hallucinating features.
+- **Explicit Requirement Satisfaction (Avg 94)**: Extremely reliable at extracting and adhering to the user's hard constraints and budgets.
+- **Safe Purchase Gating (Avg 100)**: Consistently blocks unsafe automated purchases and correctly routes to human approval.
 
-- personalized recommendation
-- 3–4 **WHY THIS PRODUCT?** reasons
-- tradeoffs
+#### Known Limitations
+- **Qualitative Verification**: Struggles to verify qualitative constraints (e.g., "good cushioning", "adjustable stand") when the raw data source lacks explicit technical fields for them.
+- **Brief Final Responses**: While internal reasoning is strong, the final user-facing recommendation message is sometimes overly minimalist and fails to fully explain *why* the product meets the unverified requirements.
+- **Metadata Inconsistencies**: Minor discrepancies occur occasionally (e.g., labeling battery life as 'unknown' internally despite it existing in the specs).
 
-Reasons must be supported by supplied evidence. The system does not fabricate specifications or customer stories.
+---
 
-## Purchase safety
+## Tech Stack
 
-The Risk Guard is deliberately not an LLM.
+- **Orchestration**: LangGraph, LangChain
+- **LLM Engine**: Google Gemini (Primary), Groq (Failover)
+- **Marketplace Data**: SerpAPI (Google Shopping & Immersive Product API)
+- **Backend & APIs**: Python, FastAPI
+- **Payments**: Razorpay SDK
+- **Database**: SQLite, SQLAlchemy
+- **Observability**: LangSmith
 
-It checks:
-
-- verified budget ceiling
-- verified product price
-- merchant trust evidence
-- confirmed stock
-- optional autonomous purchase limit
-
-Normal purchases require confirmation. Auto-buy can proceed only when the user's explicit auto-purchase limit permits it.
-
-Razorpay payment completion is accepted only after backend signature verification.
+---
 
 ## Project Structure
 
 ```text
 shop.ai/
 ├── app/
-│   ├── agents/
-│   │   ├── orchestrator.py
-│   │   ├── research_agent.py
-│   │   ├── product_info_agent.py
-│   │   ├── review_trust_agent.py
-│   │   ├── evidence_agent.py
-│   │   ├── recommendation_agent.py
-│   │   ├── risk_agent.py
-│   │   ├── purchase_agent.py
-│   │   └── llm_client.py
-│   ├── commerce/
-│   │   ├── ranking.py
-│   │   └── policies.py
-│   ├── integrations/
-│   │   └── product_scraper.py
-│   ├── mcp/
-│   ├── payments/
-│   ├── inventory/
-│   ├── observability/
-│   └── api/
-├── database/
-├── frontend/
-├── tests/
-├── scripts/
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+│   ├── agents/          # LangGraph nodes and orchestrator (Intent, Research, Risk, etc.)
+│   ├── api/             # FastAPI entrypoints
+│   ├── commerce/        # Deterministic ranking and utility math
+│   ├── integrations/    # External clients (SerpAPI, Merchant systems)
+│   ├── inventory/       # Stock and reservation logic
+│   ├── mcp/             # MCP Servers
+│   ├── observability/   # SQLite logging
+│   └── payments/        # Razorpay integration and HMAC validation
+├── database/            # SQLAlchemy models
+├── frontend/            # React/Vite UI
+├── scripts/             # End-to-end evaluation benchmark scripts
+├── tests/               # Unit and pipeline tests
+└── start.sh             # Launch script
 ```
 
-## Setup
+---
 
-### Backend
+## Setup & Running Locally
 
-```bash
-conda create -n shopai python=3.11
-conda activate shopai
-pip install -r requirements.txt
-cp .env.example .env
-```
+1. **Environment Variables**:
+   Copy `.env.example` to `.env` and populate:
+   ```env
+   # API Keys
+   GEMINI_API_KEY=your_gemini_key
+   GROQ_API_KEY=your_groq_key
+   SERPAPI_API_KEY=your_serpapi_key
+   
+   # Razorpay Credentials
+   RAZORPAY_KEY_ID=your_key_id
+   RAZORPAY_KEY_SECRET=your_key_secret
+   
+   # Observability (Optional)
+   LANGSMITH_TRACING=true
+   LANGCHAIN_API_KEY=your_langsmith_key
+   ```
 
+2. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Set the required values in `.env`:
+3. **Run the Backend**:
+   ```bash
+   uvicorn app.api.main:app --reload
+   ```
 
-```text
-GEMINI_API_KEY=...
-SERPAPI_KEY=...
-RAZORPAY_KEY_ID=...
-RAZORPAY_KEY_SECRET=...
-```
-
-`SCRAPERAPI_KEY` is optional.
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### Start the API
-
-From the repository root:
-
-```bash
-uvicorn app.api.main:app --reload
-```
-
-Then open the frontend URL shown by Vite.
-
-## Testing
-
-Backend unit & benchmark tests:
-
-```bash
-python tests/test_pipeline.py
-python scripts/evaluate_system.py
-```
-
-Frontend production build:
-
-```bash
-cd frontend
-npm run build
-```
-
-## Deployment
-
-### 1. Local Docker Testing (Backend)
-
-Build and run the FastAPI backend container locally:
-
-```bash
-# Build Docker image
-docker build -t shopai-backend .
-
-# Run container with your .env
-docker run -p 8000:8000 --env-file .env shopai-backend
-```
-
-Test health endpoint:
-```bash
-curl http://localhost:8000/api/health
-```
-
-### 2. Deploying Backend to Render
-
-1. Push your repository to GitHub.
-2. In [Render Dashboard](https://dashboard.render.com), click **New +** $\rightarrow$ **Web Service**.
-3. Connect your GitHub repository.
-4. Set **Environment** to **Docker** (or Python 3).
-5. Add the following **Environment Variables** in Render:
-   - `GEMINI_API_KEY`
-   - `SERPAPI_KEY`
-   - `RAZORPAY_KEY_ID`
-   - `RAZORPAY_KEY_SECRET`
-   - `LANGSMITH_TRACING` (`true`)
-   - `LANGSMITH_API_KEY`
-   - `LANGSMITH_PROJECT` (`shop.ai`)
-   - `LANGSMITH_ENDPOINT` (`https://api.smith.langchain.com`)
-6. Click **Deploy Web Service**. Render will provide a public URL (e.g. `https://shopai-backend.onrender.com`).
-
-### 3. Deploying Frontend to Vercel
-
-1. In [Vercel Dashboard](https://vercel.com), click **Add New...** $\rightarrow$ **Project**.
-2. Select your repository and set the **Root Directory** to `frontend`.
-3. Add the following **Environment Variable**:
-   - `VITE_API_URL`: `https://your-shopai-backend.onrender.com` (your Render backend URL).
-4. Click **Deploy**.
-
-## Security
-
-Never commit `.env`, database files, API keys or generated frontend artifacts. Use `.env.example` as the configuration template.
-
-Razorpay credentials remain backend-only. The frontend receives only the public Razorpay key ID required by Checkout.
-
+4. **Run Tests and Evaluations**:
+   ```bash
+   python tests/test_pipeline.py
+   python scripts/evaluate_system.py
+   ```
