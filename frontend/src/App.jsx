@@ -255,6 +255,8 @@ export default function App() {
         await run(goal, false, false);
       } catch (e) {
         console.error("Agent execution error:", e);
+      } finally {
+        setLedgerActive(false);
       }
     },
     [run, clearLedger]

@@ -152,8 +152,10 @@ export default function DecisionLedgerCard({ events = [], sessionId, userGoal, a
     if (stageKey === "EVALUATION") {
       const topCand = activeState?.candidates?.[0] || activeState?.selected_product;
       const reasons = topCand?.recommendation_reasons || [];
-      if (reasons.length > 0) {
+      if (Array.isArray(reasons) && reasons.length > 0) {
         return `Recommendation grounded in verified facts: ${reasons.slice(0, 2).join(" · ")}`;
+      } else if (typeof reasons === "string" && reasons.trim()) {
+        return `Recommendation grounded in verified facts: ${reasons.trim()}`;
       }
       const insight = topCand?.ai_insight || topCand?.review_evidence?.evidence_summary;
       return insight ? `Recommendation: ${insight}` : STAGE_CONFIG.EVALUATION.defaultSummary;

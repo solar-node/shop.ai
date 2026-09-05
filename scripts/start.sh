@@ -50,7 +50,7 @@ echo ""
 
 # Backend in background
 source venv/bin/activate
-uvicorn app.api.main:app --port 8000 --reload &
+uvicorn app.api.main:app --port 8000 --reload --reload-dir app &
 BACKEND_PID=$!
 
 # Frontend in background

@@ -125,7 +125,7 @@ export default function NeuralPipeline({ stateStatus, events = [], activeState =
                   <line x1="12" y1="17" x2="12" y2="21" />
                 </svg>
               </span>
-              <span className="subnode-title">2B. Product Spec Spec</span>
+              <span className="subnode-title">2B. Product Specs</span>
             </div>
             <div className="subnode-desc">Category attribute planning</div>
             <div className="subnode-footer">
